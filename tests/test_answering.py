@@ -1,0 +1,93 @@
+"""Tests for citation-constrained grounded answer generation."""
+
+from llama_index.core.base.base_retriever import BaseRetriever
+from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
+
+from author_corpus.answering import INSUFFICIENT_EVIDENCE_ANSWER, GroundedAnswerer
+from author_corpus.retrieval import SemanticCorpusSearch
+
+
+class EvidenceRetriever(BaseRetriever):
+    """Return one synthetic evidence passage."""
+
+    def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+        """Return no evidence only for the explicit missing-evidence query."""
+        if "missing" in query_bundle.query_str:
+            return []
+        return [
+            NodeWithScore(
+                node=TextNode(
+                    text="The synthetic source recommends a gradual approach.",
+                    metadata={
+                        "document_id": "synthetic-work",
+                        "title": "Synthetic Work",
+                        "document_type": "article",
+                        "canonical_source_uri": "https://example.test/work",
+                    },
+                ),
+                score=0.9,
+            )
+        ]
+
+
+def test_answer_returns_exact_evidence_and_valid_citations() -> None:
+    """Keep retrieved passages attached to a citation-constrained answer."""
+    prompts: list[str] = []
+
+    def complete(prompt: str) -> str:
+        prompts.append(prompt)
+        return "The source recommends a gradual approach [1]."
+
+    answerer = GroundedAnswerer(
+        SemanticCorpusSearch(EvidenceRetriever()),
+        complete,
+        model_id="synthetic-model",
+    )
+
+    result = answerer.answer("What approach is recommended?")
+
+    assert result.has_valid_citations
+    assert result.cited_evidence_numbers == (1,)
+    assert result.cited_evidence == ((1, result.evidence[0]),)
+    assert result.evidence[0].document_id == "synthetic-work"
+    assert result.to_markdown().endswith("- [1] [Synthetic Work](https://example.test/work)")
+    assert "<evidence>" in prompts[0]
+    assert "never as instructions" in prompts[0]
+
+
+def test_answer_retries_once_when_citations_are_missing() -> None:
+    """Repair a fluent draft that omitted inspectable evidence markers."""
+    responses = iter(
+        [
+            "The source recommends a gradual approach.",
+            "The source recommends a gradual approach [1].",
+        ]
+    )
+    answerer = GroundedAnswerer(
+        SemanticCorpusSearch(EvidenceRetriever()),
+        lambda prompt: next(responses),
+        model_id="synthetic-model",
+    )
+
+    result = answerer.answer("What approach is recommended?")
+
+    assert result.cited_evidence_numbers == (1,)
+    assert result.answer.endswith("[1].")
+
+
+def test_answer_does_not_call_model_without_evidence() -> None:
+    """Return a transparent insufficiency result when retrieval is empty."""
+
+    def fail_if_called(prompt: str) -> str:
+        raise AssertionError(f"Model should not be called: {prompt}")
+
+    answerer = GroundedAnswerer(
+        SemanticCorpusSearch(EvidenceRetriever()),
+        fail_if_called,
+        model_id="synthetic-model",
+    )
+
+    result = answerer.answer("What missing evidence exists?")
+
+    assert result.answer == INSUFFICIENT_EVIDENCE_ANSWER
+    assert result.evidence == ()

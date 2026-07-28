@@ -1,0 +1,17 @@
+name: Example Author Corpus
+
+inputs:
+  - path: /absolute/path/to/articles
+    metadata:
+      document_type: article
+
+  - path: /absolute/path/to/paper.pdf
+    metadata:
+      title: Example Paper
+      document_type: paper
+      authors:
+        - Example Author
+      sources:
+        - uri: https://example.org/papers/example
+          source_type: webpage
+          is_canonical: true

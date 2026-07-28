@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "author-corpus-rag"
+version = "0.1.0"
+description = "Source-agnostic ingestion and RAG analysis for an author's corpus"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "llama-index-core>=0.14.23",
+    "llama-index-readers-file>=0.6.0",
+    "pydantic>=2.13",
+    "python-dotenv>=1.2.2",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+author-corpus = "author_corpus.cli:main"
+
+[project.optional-dependencies]
+local = [
+    "llama-index-embeddings-huggingface>=0.7.0",
+    "openai>=2.49",
+    "torch>=2.9",
+]
+ui = ["gradio>=6.0"]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.0",
+    "ipywidgets>=8.1",
+    "mypy>=1.19",
+    "nbclient>=0.10.2",
+    "nbstripout>=0.8.2",
+    "pre-commit>=4.0",
+    "pytest>=9.0",
+    "ruff>=0.14",
+    "types-pyyaml>=6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/author_corpus"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.ruff]
+line-length = 130
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
