@@ -118,3 +118,25 @@ def test_answer_can_reuse_an_already_inspected_search_result() -> None:
 
     assert result.evidence == search_result.passages
     assert result.cited_evidence_numbers == (1,)
+
+
+def test_answer_can_separate_retrieval_wording_from_user_question() -> None:
+    """Retrieve with normalized terms while asking the model the literal question."""
+    prompts: list[str] = []
+
+    def complete(prompt: str) -> str:
+        prompts.append(prompt)
+        return "The source provides one supported fact [1]."
+
+    search = SemanticCorpusSearch(EvidenceRetriever())
+    search_result = search.search("corpus author personal facts biography")
+    answerer = GroundedAnswerer(
+        search,
+        complete,
+        model_id="synthetic-model",
+    )
+
+    result = answerer.answer_from_search_result(search_result, question="What are Av's favorite things?")
+
+    assert result.query == "corpus author personal facts biography"
+    assert "Question:\nWhat are Av's favorite things?" in prompts[0]

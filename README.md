@@ -136,6 +136,16 @@ renders a concise source sample while the complete set remains available in
 `exact_result.documents`. Exact catalog execution is timed separately from
 routing.
 
+Semantic retrieval can additionally use trusted nicknames or pen names from the
+private `AUTHOR_CORPUS_DEFAULT_AUTHOR_ALIASES` JSON array. These aliases are
+validated against catalog author credits and rejected when they collide with
+another author. The resolver never guesses aliases with fuzzy matching. It
+normalizes configured author references to a corpus-author role and can add
+generic biographical search terms for personal-profile questions, while the
+grounded model receives the user's actual question with only those trusted
+references canonicalized. The resolution is inspectable on
+`CorpusQueryResult.author_resolution`.
+
 Semantic retrieval deliberately reports `exhaustive=False` and returns its
 passage text and source URIs so retrieval can be inspected before an LLM writes
 an answer. Grounded answers retain the exact evidence supplied to the model and

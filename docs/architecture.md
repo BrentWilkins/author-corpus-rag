@@ -106,6 +106,7 @@ flowchart TB
     question[Current user question]
     history[Conversation history]
     context[Bounded context resolver]
+    identity[Conservative author identity resolver]
     router{Deterministic query router}
 
     exact_args[Validate author and type<br/>against catalog values]
@@ -120,14 +121,18 @@ flowchart TB
     generator[Optional grounded generation]
     semantic_result[Cited answer or<br/>inspectable passages]
 
+    question --> router
     question --> context
     history --> context
-    context --> router
+    context --> identity
 
     router -->|exact_catalog| exact_args --> exact_query --> exact_result
     router -->|broad_discovery| discovery --> evidence
     router -->|focused_evidence| dense --> rrf
     router -->|focused_evidence| bm25 --> rrf
+    identity -. resolved semantic query .-> discovery
+    identity -. resolved semantic query .-> dense
+    identity -. resolved semantic query .-> bm25
     rrf --> evidence
     evidence --> generator --> semantic_result
     evidence -->|generation disabled| semantic_result
@@ -136,7 +141,12 @@ flowchart TB
 Routing always uses the literal current question. For semantic follow-ups, the
 context resolver may append only the immediately preceding user question to the
 retrieval query. It never appends generated assistant text, and it never
-rewrites an exact catalog question.
+rewrites an exact catalog question. The identity resolver then replaces only
+the configured default-author name, explicitly trusted aliases, and generic
+phrases such as “the author” with a corpus-author retrieval role. It does not
+guess nickname relationships. The literal or bounded-context question—not the
+retrieval keywords—is passed to grounded generation with only explicitly
+resolved author references canonicalized.
 
 The three routes have deliberately different coverage contracts:
 
@@ -159,6 +169,7 @@ sequenceDiagram
     participant Context as Conversation resolver
     participant Service as CorpusQueryService
     participant Router as Query router
+    participant Identity as Author identity resolver
     participant Catalog as SQLite catalog
     participant Search as Retrieval profile
     participant Model as Local model
@@ -176,10 +187,12 @@ sequenceDiagram
         Service-->>UI: ExactCatalogResult
     else Broad or focused semantic question
         Router-->>Service: discovery or focused evidence
-        Service->>Search: Retrieve once
+        Service->>Identity: Resolve configured references in retrieval query
+        Identity-->>Service: Retrieval query + canonicalized grounding question
+        Service->>Search: Retrieve once with resolved query
         Search-->>Service: Ranked source passages + provenance
         opt Generation enabled
-            Service->>Model: Question + same numbered passages
+            Service->>Model: Actual question + same numbered passages
             Model-->>Service: Draft with evidence markers
             Service->>Service: Validate or repair citations
         end
@@ -287,8 +300,10 @@ always cite retrieved source passages.
    appears in that author's article.
 8. Conversation context uses previous user wording only; prior model output is
    never treated as retrieval evidence.
-9. Score kinds remain explicit and incomparable across retrieval methods.
-10. Private corpus configuration, evaluation labels, caches, and notebook output
+9. Semantic author aliases are explicit private configuration, are checked for
+   catalog collisions, and are never inferred with fuzzy matching.
+10. Score kinds remain explicit and incomparable across retrieval methods.
+11. Private corpus configuration, evaluation labels, caches, and notebook output
     stay outside version control.
 
 ## Component map
@@ -302,6 +317,7 @@ always cite retrieved source passages.
 | Structure and voice chunking | `src/author_corpus/structure.py`, `voice.py`, `indexing.py` |
 | Dense/BM25 profiles and fusion | `src/author_corpus/hybrid.py`, `retrieval.py` |
 | Query routing | `src/author_corpus/routing.py` |
+| Conservative author identity | `src/author_corpus/identity.py` |
 | Single-retrieval orchestration | `src/author_corpus/service.py` |
 | Bounded conversation context | `src/author_corpus/conversation.py` |
 | Private runtime loading | `src/author_corpus/runtime.py` |

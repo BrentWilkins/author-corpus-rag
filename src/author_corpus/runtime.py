@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from author_corpus.catalog import CorpusCatalog
 from author_corpus.hybrid import build_retrieval_profiles
+from author_corpus.identity import parse_author_aliases
 from author_corpus.indexing import INDEX_PIPELINE_VERSION, load_vector_index, vector_index_exists
 from author_corpus.ingestion import load_corpus_config
 from author_corpus.local_llm import LocalModelSettings, OpenAICompatibleCompleter
@@ -29,6 +30,7 @@ class RuntimeSettings(BaseModel):
     config_path: Path
     embedding_model: str = Field(min_length=1)
     default_author: str | None = None
+    author_aliases: tuple[str, ...] = ()
     model: LocalModelSettings
     chunk_size: int = Field(default=1024, ge=1)
     chunk_overlap: int = Field(default=200, ge=0)
@@ -55,6 +57,7 @@ class RuntimeSettings(BaseModel):
             config_path=config_path.resolve(),
             embedding_model=environment.get("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5").strip(),
             default_author=environment.get("AUTHOR_CORPUS_DEFAULT_AUTHOR") or None,
+            author_aliases=parse_author_aliases(environment.get("AUTHOR_CORPUS_DEFAULT_AUTHOR_ALIASES")),
             model=LocalModelSettings.model_validate(
                 {
                     "model_id": model_id,
@@ -150,6 +153,7 @@ def load_query_runtime(
         complete=complete,
         model_id=settings.model.model_id,
         default_author=settings.default_author,
+        author_aliases=settings.author_aliases,
         minimum_document_author_fraction=0.8,
         trace_context=QueryTraceContext(
             store=QueryTraceStore(layout.query_trace_path),

@@ -154,6 +154,32 @@ cases:
     assert evaluation.mean_normalized_discounted_cumulative_gain == 1.0
 
 
+def test_evaluation_can_measure_the_runtime_query_transform(tmp_path: Path) -> None:
+    """Keep human wording in labels while retrieving with normalized runtime terms."""
+    path = tmp_path / "retrieval-eval.local.yaml"
+    path.write_text(
+        """\
+cases:
+  - name: transformed-query
+    query: Raw author wording.
+    relevant_document_ids:
+      - relevant
+""",
+        encoding="utf-8",
+    )
+    search = SemanticCorpusSearch(EvaluationRetriever(), default_limit=2)
+
+    evaluation = evaluate_retrieval(
+        search,
+        load_retrieval_cases(path),
+        top_k=2,
+        query_transform=lambda query: f"successful {query}",
+    )
+
+    assert evaluation.hit_rate == 1.0
+    assert evaluation.cases[0].query == "Raw author wording."
+
+
 def _candidate(document_id: str, *, score: float) -> NodeWithScore:
     document_author_fraction = 0.2 if document_id == "unrelated" else 0.95
     return NodeWithScore(

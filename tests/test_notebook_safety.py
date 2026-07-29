@@ -34,7 +34,19 @@ def test_notebook_uses_separate_discovery_and_grounded_evidence_profiles() -> No
         in notebook_text
     )
     assert "evidence_limit=selected_search.default_limit" in notebook_text
-    assert "grounded_answerer.answer_from_search_result(semantic_result)" in notebook_text
+    assert "grounded_answerer.answer_from_search_result(" in notebook_text
+    assert "question=author_resolution.grounding_question" in notebook_text
+
+
+def test_notebook_uses_configured_author_identity_for_retrieval_and_grounding() -> None:
+    """Route literally while using separately normalized retrieval and grounding text."""
+    notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
+
+    assert "AUTHOR_CORPUS_DEFAULT_AUTHOR_ALIASES" in notebook_text
+    assert "route_decision = route_query(semantic_query)" in notebook_text
+    assert "author_resolution = resolve_author_query(semantic_query, author_identity)" in notebook_text
+    assert "author_resolution.retrieval_query" in notebook_text
+    assert "question=author_resolution.grounding_question" in notebook_text
 
 
 def test_notebook_does_not_send_exact_catalog_questions_to_semantic_search() -> None:

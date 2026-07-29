@@ -55,7 +55,13 @@ class CountingRetriever(BaseRetriever):
         ]
 
 
-def _service(tmp_path: Path, retriever: CountingRetriever, *, with_generation: bool) -> CorpusQueryService:
+def _service(
+    tmp_path: Path,
+    retriever: CountingRetriever,
+    *,
+    with_generation: bool,
+    author_aliases: tuple[str, ...] = (),
+) -> CorpusQueryService:
     source = tmp_path / "work.md"
     source.write_text(
         "---\ntitle: Synthetic Work\nauthor: Avery Stone\ndocument_type: article\n---\n\nSynthetic body.",
@@ -83,6 +89,7 @@ def _service(tmp_path: Path, retriever: CountingRetriever, *, with_generation: b
             complete=lambda prompt: "The source recommends a gradual approach [1].",
             model_id=model_settings.model_id,
             default_author="Avery Stone",
+            author_aliases=author_aliases,
             trace_context=QueryTraceContext(
                 store=QueryTraceStore(tmp_path / "query-traces.sqlite3"),
                 corpus_fingerprint=corpus_fingerprint(loaded.documents),
@@ -90,7 +97,7 @@ def _service(tmp_path: Path, retriever: CountingRetriever, *, with_generation: b
                 generation_settings=model_settings,
             ),
         )
-    return CorpusQueryService(catalog, profiles, default_author="Avery Stone")
+    return CorpusQueryService(catalog, profiles, default_author="Avery Stone", author_aliases=author_aliases)
 
 
 def test_exact_question_bypasses_retrieval_and_generation(tmp_path: Path) -> None:
@@ -129,6 +136,7 @@ def test_semantic_generation_reuses_the_inspected_retrieval(tmp_path: Path) -> N
     assert trace.evidence[0].passage_text == result.semantic.passages[0].text
     assert [timing.label for timing in result.timings] == [
         "routing",
+        "author identity",
         "retrieval",
         "generation",
         "trace persistence",
@@ -146,6 +154,21 @@ def test_broad_question_selects_discovery_without_generation(tmp_path: Path) -> 
     assert result.semantic.strategy == "dense_discovery"
     assert result.grounded_answer is None
     assert "Generation is disabled" in result.to_markdown()
+
+
+def test_semantic_query_resolves_only_configured_author_alias(tmp_path: Path) -> None:
+    """Keep the literal question while removing a trusted author alias from retrieval keywords."""
+    retriever = CountingRetriever()
+    service = _service(tmp_path, retriever, with_generation=False, author_aliases=("Av",))
+
+    result = service.ask("Tell me three personal facts about Av.")
+
+    assert result.query == "Tell me three personal facts about Av."
+    assert result.retrieval_query == "corpus author personal facts biography"
+    assert retriever.queries == [result.retrieval_query]
+    assert result.author_resolution is not None
+    assert result.author_resolution.canonical_author == "Avery Stone"
+    assert result.author_resolution.grounding_question == "Tell me three personal facts about Avery Stone."
 
 
 def test_semantic_follow_up_uses_only_previous_user_question(tmp_path: Path) -> None:

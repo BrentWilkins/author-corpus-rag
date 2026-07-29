@@ -12,6 +12,7 @@ from author_corpus.answering import GroundedAnswer, GroundedAnswerer
 from author_corpus.catalog import CorpusCatalog
 from author_corpus.exact import ExactCatalogResult, execute_catalog_query
 from author_corpus.hybrid import RetrievalProfiles
+from author_corpus.identity import AuthorIdentity, AuthorQueryResolution, resolve_author_query
 from author_corpus.local_llm import LocalModelSettings
 from author_corpus.retrieval import SemanticCorpusSearch, SemanticSearchResult
 from author_corpus.routing import QueryRoute, QueryRouteDecision, route_query
@@ -50,6 +51,7 @@ class CorpusQueryResult(BaseModel):
     query: str = Field(min_length=1)
     retrieval_query: str = Field(min_length=1)
     decision: QueryRouteDecision
+    author_resolution: AuthorQueryResolution | None = None
     exact: ExactCatalogResult | None = None
     semantic: SemanticSearchResult | None = None
     grounded_answer: GroundedAnswer | None = None
@@ -60,11 +62,16 @@ class CorpusQueryResult(BaseModel):
     def validate_route_artifacts(self) -> CorpusQueryResult:
         """Prevent exact and semantic execution artifacts from being mixed."""
         if self.decision.route is QueryRoute.EXACT_CATALOG:
-            if self.exact is None or self.semantic is not None or self.grounded_answer is not None:
+            if (
+                self.exact is None
+                or self.author_resolution is not None
+                or self.semantic is not None
+                or self.grounded_answer is not None
+            ):
                 raise ValueError("Exact results require only an exact catalog artifact.")
             if self.retrieval_query != self.query:
                 raise ValueError("Exact results cannot use a contextualized retrieval query.")
-        elif self.exact is not None or self.semantic is None:
+        elif self.exact is not None or self.semantic is None or self.author_resolution is None:
             raise ValueError("Semantic results require retrieval and cannot include an exact artifact.")
         if (
             self.grounded_answer is not None
@@ -89,7 +96,10 @@ class CorpusQueryResult(BaseModel):
 
         timing_text = ", ".join(f"{timing.label} {timing.elapsed_seconds:.3f}s" for timing in self.timings)
         trace_text = "" if self.trace_id is None else f" · trace `{self.trace_id}`"
-        return f"{body}\n\n---\nRoute: `{self.decision.route.value}` · {timing_text}{trace_text}"
+        identity_text = ""
+        if self.author_resolution is not None and self.author_resolution.changed:
+            identity_text = "\n\n_Retrieval resolved configured author references to the corpus-author identity._"
+        return f"{body}{identity_text}\n\n---\nRoute: `{self.decision.route.value}` · {timing_text}{trace_text}"
 
 
 class CorpusQueryService:
@@ -103,6 +113,7 @@ class CorpusQueryService:
         complete: Callable[[str], str] | None = None,
         model_id: str | None = None,
         default_author: str | None = None,
+        author_aliases: tuple[str, ...] = (),
         minimum_document_author_fraction: float | None = 0.8,
         trace_context: QueryTraceContext | None = None,
     ) -> None:
@@ -116,6 +127,15 @@ class CorpusQueryService:
         self.complete = complete
         self.model_id = model_id
         self.default_author = default_author
+        self.author_identity = (
+            AuthorIdentity.from_catalog(
+                default_author=default_author,
+                aliases=author_aliases,
+                catalog_authors=(name for name, _ in catalog.author_counts()),
+            )
+            if default_author is not None and default_author.strip()
+            else None
+        )
         self.minimum_document_author_fraction = minimum_document_author_fraction
         self.trace_context = trace_context
 
@@ -146,9 +166,13 @@ class CorpusQueryService:
                 timings=tuple(timings),
             )
 
-        effective_query = (retrieval_query or normalized_query).strip()
-        if not effective_query:
+        contextualized_query = (retrieval_query or normalized_query).strip()
+        if not contextualized_query:
             raise ValueError("Retrieval query must not be empty.")
+        identity_started = perf_counter()
+        author_resolution = resolve_author_query(contextualized_query, self.author_identity)
+        effective_query = author_resolution.retrieval_query
+        timings.append(QueryTiming(label="author identity", elapsed_seconds=perf_counter() - identity_started))
         search = self._search_for(decision.route)
         retrieval_started = perf_counter()
         semantic = search.search(
@@ -166,7 +190,7 @@ class CorpusQueryService:
                 self.complete,
                 model_id=self.model_id,
                 evidence_limit=search.default_limit,
-            ).answer_from_search_result(semantic)
+            ).answer_from_search_result(semantic, question=author_resolution.grounding_question)
             generation_timing = QueryTiming(label="generation", elapsed_seconds=perf_counter() - generation_started)
             timings.append(generation_timing)
             if self.trace_context is not None:
@@ -197,6 +221,7 @@ class CorpusQueryService:
             query=normalized_query,
             retrieval_query=effective_query,
             decision=decision,
+            author_resolution=author_resolution,
             semantic=semantic,
             grounded_answer=answer,
             trace_id=trace_id,

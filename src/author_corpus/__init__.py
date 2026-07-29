@@ -47,6 +47,12 @@ from author_corpus.hybrid import (
     build_retrieval_profiles,
     load_or_build_bm25_retriever,
 )
+from author_corpus.identity import (
+    AuthorIdentity,
+    AuthorQueryResolution,
+    parse_author_aliases,
+    resolve_author_query,
+)
 from author_corpus.indexing import INDEX_PIPELINE_VERSION
 from author_corpus.ingestion import load_corpus, load_corpus_config
 from author_corpus.models import (
@@ -103,6 +109,8 @@ from author_corpus.workflow import NotebookRunOptions
 __all__ = [
     "AuditedClaim",
     "AuthorDocumentStats",
+    "AuthorIdentity",
+    "AuthorQueryResolution",
     "CacheLayout",
     "CatalogAuthorCount",
     "CatalogAuthorshipResult",
@@ -190,6 +198,8 @@ __all__ = [
     "load_query_runtime",
     "load_routing_cases",
     "load_or_build_bm25_retriever",
+    "parse_author_aliases",
     "route_query",
+    "resolve_author_query",
     "resolve_conversation_query",
 ]

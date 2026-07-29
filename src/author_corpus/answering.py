@@ -85,8 +85,16 @@ class GroundedAnswerer:
         )
         return self.answer_from_search_result(search_result)
 
-    def answer_from_search_result(self, search_result: SemanticSearchResult) -> GroundedAnswer:
-        """Generate from an already inspected result without retrieving again."""
+    def answer_from_search_result(
+        self,
+        search_result: SemanticSearchResult,
+        *,
+        question: str | None = None,
+    ) -> GroundedAnswer:
+        """Generate from inspected evidence while allowing a distinct user question."""
+        answer_question = (question or search_result.query).strip()
+        if not answer_question:
+            raise ValueError("Answer question must not be empty.")
         evidence = search_result.passages
         if not evidence:
             return GroundedAnswer(
@@ -99,7 +107,7 @@ class GroundedAnswerer:
             )
 
         prompt = _answer_prompt(
-            search_result.query,
+            answer_question,
             evidence,
             max_passage_characters=self.max_passage_characters,
         )

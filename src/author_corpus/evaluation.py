@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from time import perf_counter
 
@@ -172,6 +172,7 @@ def evaluate_retrieval(
     cases: tuple[RetrievalCase, ...],
     *,
     top_k: int = 5,
+    query_transform: Callable[[str], str] | None = None,
 ) -> RetrievalEvaluation:
     """Evaluate whether known relevant documents occur in the top results."""
     if top_k < 1:
@@ -179,8 +180,9 @@ def evaluate_retrieval(
 
     results: list[RetrievalCaseResult] = []
     for case in cases:
+        retrieval_query = case.query if query_transform is None else query_transform(case.query)
         search_result = search.search(
-            case.query,
+            retrieval_query,
             limit=top_k,
             minimum_document_author_fraction=case.minimum_document_author_fraction,
         )
@@ -228,6 +230,7 @@ def evaluate_retrieval_strategies(
     cases: tuple[RetrievalCase, ...],
     *,
     top_k: int = 5,
+    query_transform: Callable[[str], str] | None = None,
 ) -> RetrievalBenchmark:
     """Time and evaluate multiple retrieval strategies on identical cases."""
     if not searches:
@@ -235,7 +238,7 @@ def evaluate_retrieval_strategies(
     strategy_results: list[RetrievalStrategyEvaluation] = []
     for strategy, search in searches.items():
         started = perf_counter()
-        evaluation = evaluate_retrieval(search, cases, top_k=top_k)
+        evaluation = evaluate_retrieval(search, cases, top_k=top_k, query_transform=query_transform)
         strategy_results.append(
             RetrievalStrategyEvaluation(
                 strategy=strategy,
