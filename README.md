@@ -106,10 +106,20 @@ focused-evidence path, which is the conservative source-grounded default.
 Questions such as “how many articles discuss a topic?” cannot be answered
 exhaustively by the metadata catalog. The router sends them to broad discovery
 and preserves the non-exhaustive warning instead of fabricating a total.
-Similarly, the notebook stops exact metadata questions before vector retrieval
-or model generation and identifies the catalog tool that needs validated
-arguments. Argument extraction remains a separate boundary rather than being
-guessed by routing rules.
+For exact metadata questions, the notebook validates author names and document
+types against catalog values, executes the selected SQLite operation, and skips
+both vector retrieval and model generation. Unknown or ambiguous filters return
+a clarification request rather than a misleading zero or unfiltered result.
+Set the private `AUTHOR_CORPUS_DEFAULT_AUTHOR` environment value to resolve
+phrases such as “the author”; an explicitly named author always takes
+precedence, and an unknown explicit name never falls back to the default.
+
+Exact results retain their matching logical documents and all source URIs as
+auditable support. A single first or last name resolves only when it identifies
+one catalog author; ambiguous aliases stop for clarification. The notebook
+renders a concise source sample while the complete set remains available in
+`exact_result.documents`. Exact catalog execution is timed separately from
+routing.
 
 Semantic retrieval deliberately reports `exhaustive=False` and returns its
 passage text and source URIs so retrieval can be inspected before an LLM writes

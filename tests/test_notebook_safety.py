@@ -37,9 +37,12 @@ def test_notebook_uses_separate_discovery_and_grounded_evidence_profiles() -> No
 
 
 def test_notebook_does_not_send_exact_catalog_questions_to_semantic_search() -> None:
-    """Stop exact metadata questions before non-exhaustive retrieval or generation."""
+    """Execute exact metadata safely without non-exhaustive retrieval or generation."""
     notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
 
     assert "if route_decision.route is QueryRoute.EXACT_CATALOG" in notebook_text
-    assert "No semantic search was run" in notebook_text
+    assert "exact_result = execute_catalog_query(" in notebook_text
+    assert r"default_author=os.getenv(\"AUTHOR_CORPUS_DEFAULT_AUTHOR\")" in notebook_text
+    assert r"timings.finish(\"Exact catalog execution\", exact_started)" in notebook_text
+    assert "No semantic search or model generation was run" in notebook_text
     assert "Grounded generation skipped because this question belongs to the exact catalog" in notebook_text

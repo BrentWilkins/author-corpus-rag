@@ -187,6 +187,19 @@ class CorpusCatalog:
             ).fetchall()
         return [(str(row["display_name"]), int(row["document_count"])) for row in rows]
 
+    def document_type_counts(self) -> list[tuple[str, int]]:
+        """Return every exact document type and its logical-document count."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT document_type, COUNT(*) AS document_count
+                FROM documents
+                GROUP BY document_type
+                ORDER BY document_count DESC, document_type
+                """
+            ).fetchall()
+        return [(str(row["document_type"]), int(row["document_count"])) for row in rows]
+
     def coauthor_counts(self, author: str) -> list[tuple[str, int]]:
         """Return coauthors and shared-document counts for one author."""
         with self._connect() as connection:

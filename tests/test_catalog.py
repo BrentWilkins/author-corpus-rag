@@ -48,6 +48,7 @@ Second synthetic document.
     assert catalog.count_documents(author="avery stone") == 2
     assert catalog.count_documents(author="Jordan Vale") == 1
     assert catalog.author_counts() == [("Avery Stone", 2), ("Jordan Vale", 1)]
+    assert catalog.document_type_counts() == [("article", 2)]
     assert catalog.coauthor_counts("Avery Stone") == [("Jordan Vale", 1)]
     author_stats = catalog.author_document_stats("Avery Stone")
     assert author_stats.credited_documents == 2
