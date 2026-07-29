@@ -272,9 +272,20 @@ heuristic currently misclassifies, so its false-support limitation remains
 visible instead of being tuned out.
 
 Classifier predictions do not update `AuditedClaim.status` automatically.
-Automatic claim extraction, semantic entailment, and human acceptance workflows
-remain future work; any model classification must remain a heuristic rather
-than proof.
+`ClaimReviewProposal` binds a suggestion to exact evidence and a corpus
+fingerprint without promoting it. An identified reviewer must explicitly
+accept, revise, or reject it with `review_claim_proposal`; the resulting
+`ClaimReviewRecord` can be persisted in `ClaimReviewStore`. Only accepted or
+revised records can be passed to `apply_claim_review`, which returns a new
+validated `EvidenceLedger`. Rejections remain auditable but cannot mutate a
+ledger.
+
+Only the conservative `supports`, `contradicts`, and `insufficient` mappings can
+be accepted unchanged. `qualifies` requires a reviewer-authored qualifier;
+`updates`, `attributed_report`, and `uncertain` also require a revised claim
+because they do not determine a safe final status by themselves. Automatic
+answer-claim extraction and an interactive review UI remain future work;
+classifier output is still a heuristic rather than proof.
 
 ## Privacy boundary
 

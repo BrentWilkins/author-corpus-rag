@@ -69,6 +69,18 @@ def test_notebook_measures_claim_classification_without_mutating_audits() -> Non
     assert "AuditedClaim(" not in notebook_text
 
 
+def test_notebook_prepares_review_proposals_without_accepting_them() -> None:
+    """Expose review candidates while leaving every consequential action explicit."""
+    notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
+
+    assert "ClaimReviewProposal.from_decision(" in notebook_text
+    assert "ClaimReviewStore(layout.claim_review_path)" in notebook_text
+    assert "No review action was taken and no AuditedClaim was created." in notebook_text
+    assert "review_claim_proposal(" not in notebook_text
+    assert ".put(review" not in notebook_text
+    assert "apply_claim_review(" not in notebook_text
+
+
 def test_notebook_does_not_send_exact_catalog_questions_to_semantic_search() -> None:
     """Execute exact metadata safely without non-exhaustive retrieval or generation."""
     notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")

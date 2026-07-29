@@ -44,3 +44,11 @@ Private synthetic prose.
     manifest = read_manifest(layout)
     assert manifest is not None
     assert manifest["document_count"] == 1
+
+
+def test_cross_fingerprint_audit_store_paths_are_stable(tmp_path: Path) -> None:
+    """Keep generated-answer traces and human reviews outside one corpus build."""
+    layout = CacheLayout(tmp_path / ".cache", "fingerprint")
+
+    assert layout.query_trace_path == tmp_path / ".cache" / "query_traces.sqlite3"
+    assert layout.claim_review_path == tmp_path / ".cache" / "claim_reviews.sqlite3"

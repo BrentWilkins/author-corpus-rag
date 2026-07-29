@@ -87,6 +87,15 @@ from author_corpus.retrieval import (
     SemanticCorpusSearch,
     SemanticSearchResult,
 )
+from author_corpus.review import (
+    ClaimReviewAction,
+    ClaimReviewProposal,
+    ClaimReviewRecord,
+    ClaimReviewStore,
+    ResolvedClaimStatus,
+    apply_claim_review,
+    review_claim_proposal,
+)
 from author_corpus.routing import (
     CatalogTool,
     QueryRoute,
@@ -149,6 +158,10 @@ __all__ = [
     "ClaimEvidenceSignals",
     "ClaimLabelMetrics",
     "ClaimRelation",
+    "ClaimReviewAction",
+    "ClaimReviewProposal",
+    "ClaimReviewRecord",
+    "ClaimReviewStore",
     "CorpusCatalog",
     "CorpusDocument",
     "CorpusLoadResult",
@@ -182,6 +195,7 @@ __all__ = [
     "QueryRouteDecision",
     "QueryRuntime",
     "RelevantPassage",
+    "ResolvedClaimStatus",
     "RetrievedPassage",
     "RetrievalBenchmark",
     "RetrievalCase",
@@ -210,6 +224,7 @@ __all__ = [
     "VoiceAnalysis",
     "VoiceSpan",
     "analyze_voice",
+    "apply_claim_review",
     "ask_conversational",
     "build_cached_document_summaries",
     "build_cached_knowledge",
@@ -234,6 +249,7 @@ __all__ = [
     "route_query",
     "resolve_author_query",
     "resolve_conversation_query",
+    "review_claim_proposal",
     "validate_evidence_spans",
     "validate_claim_classification_sources",
 ]

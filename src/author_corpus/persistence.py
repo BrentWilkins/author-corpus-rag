@@ -52,6 +52,11 @@ class CacheLayout:
         return self.root / "query_traces.sqlite3"
 
     @property
+    def claim_review_path(self) -> Path:
+        """Return the cross-fingerprint human claim-review database path."""
+        return self.root / "claim_reviews.sqlite3"
+
+    @property
     def manifest_path(self) -> Path:
         """Return the generated artifact manifest path."""
         return self.directory / "manifest.json"

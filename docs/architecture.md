@@ -330,6 +330,47 @@ versioned source text; stale labels stop notebook evaluation instead of silently
 testing a different passage. The committed set deliberately retains a known
 entity-role reversal miss, making the current false-support failure measurable.
 
+## Level 6: explicit human claim review
+
+```mermaid
+flowchart LR
+    decision[Classifier decision]
+    spans[Exact evidence spans]
+    proposal[Pending review proposal]
+    human{Identified reviewer}
+    accept[Accept]
+    revise[Revise]
+    reject[Reject]
+    record[Durable review record]
+    store[(Local SQLite review log)]
+    applicable{Accepted or revised?}
+    ledger[New validated<br/>EvidenceLedger]
+    blocked[No ledger mutation]
+
+    decision --> proposal
+    spans --> proposal
+    proposal --> human
+    human --> accept
+    human --> revise
+    human --> reject
+    accept --> record
+    revise --> record
+    reject --> record
+    record --> store
+    record --> applicable
+    applicable -->|yes| ledger
+    applicable -. no .-> blocked
+```
+
+A proposal preserves the classifier rationale, exact source spans, and corpus
+fingerprint but contains no audited claim. An explicit reviewer action creates a
+durable record. Accept preserves the proposal exactly; revise requires a fully
+specified `AuditedClaim`; reject records the decision without producing a
+claim. Applying an approved record returns a new immutable ledger and refuses
+cross-corpus evidence or evidence that was not available in the proposal.
+Qualification suggestions require revision because a scope marker alone does
+not provide a reviewer-authored qualifier.
+
 ## Cache and rebuild boundaries
 
 | Artifact | Persistence | Rebuild trigger | Role |
@@ -339,6 +380,7 @@ entity-role reversal miss, making the current false-support failure measurable.
 | BM25 index | Fingerprinted local cache with completion manifest | Vector node set or lexical pipeline changes | Exact-term retrieval arm |
 | Document summaries | SQLite cache | Document hash, model, prompt, or summary settings change | Experimental navigation only |
 | Query traces | SQLite cache | Append-only per generated answer | Citation-to-span provenance, reproducibility, and staleness checks |
+| Claim reviews | SQLite audit log | Append-only per explicit reviewer action | Durable accept, revise, and reject decisions |
 
 Caching improves latency; it does not upgrade generated summaries into source
 evidence. Exact queries always read normalized metadata, and grounded answers
@@ -366,7 +408,9 @@ always cite retrieved source passages.
 11. Score kinds remain explicit and incomparable across retrieval methods.
 12. Heuristic claim classifications never mutate manually audited claim status;
     uncertainty and attributed reports remain distinct from support.
-13. Private corpus configuration, evaluation labels, caches, and notebook output
+13. Only an explicit identified reviewer can create an applicable review record;
+    rejected reviews and cross-corpus proposals cannot update a ledger.
+14. Private corpus configuration, evaluation labels, caches, and notebook output
     stay outside version control.
 
 ## Component map
@@ -388,4 +432,5 @@ always cite retrieved source passages.
 | Citation-constrained generation | `src/author_corpus/answering.py` |
 | Exact evidence spans and answer audit trail | `src/author_corpus/audit.py`, `tracing.py` |
 | Offline claim/evidence classification | `src/author_corpus/claim_classification.py` |
+| Explicit human claim review | `src/author_corpus/review.py` |
 | Notebook and maintenance entry points | `notebooks/`, `src/author_corpus/cli.py` |
