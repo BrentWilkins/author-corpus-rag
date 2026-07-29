@@ -44,6 +44,47 @@ append-only, source-freshness checked, and separate from generated suggestions.
 Evidence-bound synthesis combines resolved ledgers without smoothing
 contradictions or promoting cached navigation summaries to fact.
 
+## Current validation snapshot
+
+Last verified on 2026-07-29 with Python 3.14. These results describe the
+current repository; they are not claims of production accuracy.
+
+| Check | Current result | What it establishes |
+| --- | ---: | --- |
+| Ruff formatting and lint | Pass | The complete committed Python/notebook tree satisfies the configured static checks. |
+| Strict mypy | Pass across 70 source files | The checked Python interfaces are type-consistent. |
+| Automated tests | 206 passed in 5.86s | Deterministic ingestion, catalog, retrieval, routing, scope, citation, trace, review, reasoning, and synthesis regressions pass. |
+| Headless notebook smoke | 15/15 code cells in 12.495s | A fresh kernel can execute the notebook with model calls and missing-index builds forced off. |
+| Committed query-routing baseline | 23/23 routes; 8/8 exact tools | The deterministic router satisfies the small synthetic coverage contract in `evaluation/query-routing.yaml`. |
+| Committed claim/evidence baseline | 28/29 exact labels | Accuracy is 96.6%; non-abstention coverage is 82.8%; accuracy when resolved is 95.8%. |
+| Claim false-support check | 1/26 non-support cases, or 3.8% | The known entity-role-reversal miss remains visible instead of being tuned out. |
+
+An aggregate-only private integration check loaded 78 normalized documents
+with 13 credited authors, including three multi-author documents. Structured
+chunking produced 645 passages, and all 645 retained an exact versioned source
+span. In a rare-author isolation smoke check, an author represented by one
+document remained the only represented author in results from discovery,
+dense, BM25, and fused retrieval. No private names, titles, questions, passages,
+or source locations are committed.
+
+The committed routing and claim cases are deliberately small synthetic
+regression sets. The private corpus check validates ingestion, indexing,
+provenance, and hard scope isolation; it does **not** establish answer quality
+or broad generalization. The claim classifier's one false-support result swaps
+the subject and object of a sentence, demonstrating why the lexical heuristic
+cannot be treated as a semantic verifier or substitute for evidence review.
+Wall-clock timings are a local snapshot and will vary by machine.
+
+Reproduce the public checks with:
+
+```bash
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy
+uv run pytest -q
+uv run python scripts/smoke_notebook.py
+```
+
 ## Setup
 
 Install Python 3.14 and
