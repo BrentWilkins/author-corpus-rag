@@ -63,6 +63,10 @@ cases:
     query: Show me several articles that are good examples of explanatory writing.
     expected_route: broad_discovery
 
+  - name: broad-multiple-personal-facts
+    query: What are Rowan Vale's three favorite things?
+    expected_route: broad_discovery
+
   - name: broad-content-list-limit
     query: Which articles discuss injury prevention?
     expected_route: broad_discovery

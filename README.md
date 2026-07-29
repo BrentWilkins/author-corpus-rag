@@ -158,8 +158,10 @@ tool. The notebook reports overall route accuracy, per-route precision and
 recall, exact-tool accuracy, mistakes, and elapsed time. Set
 `AUTHOR_CORPUS_ROUTING_EVAL` to an ignored `*.local.yaml` file to evaluate
 private, real-world wording. The committed set is a small regression baseline,
-not evidence that the rules generalize to every question; add real misses before
-considering a learned classifier.
+not evidence that the rules generalize to every question. Label private cases
+from the intended coverage contract rather than copying the router's current
+decision, retain misses as development regressions, and keep collecting unseen
+questions before considering a learned classifier.
 
 Keep corpus-specific retrieval cases in the ignored `retrieval-eval.local.yaml`.
 Each case maps a natural-language query to one or more known relevant logical

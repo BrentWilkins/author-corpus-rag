@@ -166,6 +166,14 @@ _BROAD_DISCOVERY_SIGNALS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("broad author coverage", re.compile(r"\bwhat does (?:the|this|an?) author (?:write|talk|care) about\b")),
     ("broad advice", re.compile(r"\b(practical advice|recommendations? across|advice.+readers)\b")),
     ("browse examples", re.compile(r"\b(find|show|recommend|give)\b.+\b(some|several|examples?|articles|posts|pieces)\b")),
+    (
+        "multiple personal facts",
+        re.compile(
+            r"\b(?:two|three|four|five|\d+)\s+"
+            r"(?:(?:favorite|favourite|personal|biographical)\s+)?"
+            r"(?:things?|facts?|details?|interests?|preferences?)\b"
+        ),
+    ),
 )
 
 

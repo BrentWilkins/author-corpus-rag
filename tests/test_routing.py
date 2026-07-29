@@ -25,6 +25,7 @@ FIXTURE_PATH = Path(__file__).parents[1] / "evaluation" / "query-routing.yaml"
         ("How many articles has the author written here?", QueryRoute.EXACT_CATALOG, CatalogTool.COUNT_DOCUMENTS),
         ("Who are all of those authors?", QueryRoute.EXACT_CATALOG, CatalogTool.LIST_AUTHORS),
         ("What themes appear across the corpus?", QueryRoute.BROAD_DISCOVERY, None),
+        ("Tell me three personal facts about Avery Stone.", QueryRoute.BROAD_DISCOVERY, None),
         ("How does the essay explain adaptation?", QueryRoute.FOCUSED_EVIDENCE, None),
     ],
 )
@@ -91,7 +92,7 @@ def test_evaluate_router_reports_routes_tools_and_confusion() -> None:
     cases = load_routing_cases(FIXTURE_PATH)
     evaluation = evaluate_query_router(cases)
 
-    assert len(cases) == 22
+    assert len(cases) == 23
     assert evaluation.accuracy == 1.0
     assert evaluation.exact_tool_accuracy == 1.0
     assert all(metric.precision == 1.0 for metric in evaluation.route_metrics)
