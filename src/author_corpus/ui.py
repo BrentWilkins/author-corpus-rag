@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import cast
+from collections.abc import Callable, Mapping
+from typing import Protocol, cast
 
 import gradio as gr
 
@@ -51,6 +51,29 @@ _VERIFIER_CHOICES: tuple[tuple[str, str], ...] = (
     ("Structured semantic verifier (experimental)", "semantic"),
 )
 _CORPUS_SCOPE_VALUE = "__entire_corpus__"
+
+
+class _EventMethod(Protocol):
+    """Describe the stable subset of a dynamically exposed Gradio event method."""
+
+    def __call__(
+        self,
+        *,
+        fn: Callable[..., object],
+        inputs: object,
+        outputs: object,
+        api_visibility: str,
+    ) -> object:
+        """Bind a callback to one component event."""
+        ...
+
+
+def _event_method(component: object, name: str) -> _EventMethod:
+    """Return a checked Gradio event method despite platform-dependent typing."""
+    method = getattr(component, name, None)
+    if not callable(method):
+        raise RuntimeError(f"Gradio component does not expose the {name!r} event method.")
+    return cast(_EventMethod, method)
 
 
 def build_chat_interface(
@@ -591,13 +614,13 @@ def _render_configured_review_queue(workspace: ClaimReviewWorkspace | None) -> N
             recent_claim_reviews_markdown(workspace),
         )
 
-    proposal.change(
+    _event_method(proposal, "change")(
         fn=select,
         inputs=proposal,
         outputs=(preview, revised_statement, revised_status),
         api_visibility="private",
     )
-    submit.click(
+    _event_method(submit, "click")(
         fn=record,
         inputs=(
             proposal,
@@ -637,7 +660,7 @@ def _render_generated_claim_preview(store: QueryTraceStore | None) -> None:
         except ValueError as exc:
             return f"**Trace not available:** {_escape_inline(str(exc))}"
 
-    trace.change(
+    _event_method(trace, "change")(
         fn=select,
         inputs=trace,
         outputs=report,
@@ -679,7 +702,7 @@ def _render_answer_review_tab(
         except ValueError as exc:
             return f"**Trace not available:** {_escape_inline(str(exc))}", ""
 
-    trace.change(
+    _event_method(trace, "change")(
         fn=select,
         inputs=trace,
         outputs=(preview, revised_answer),
@@ -718,7 +741,7 @@ def _render_answer_review_tab(
             recent_answer_reviews_markdown(review_store),
         )
 
-    submit.click(
+    _event_method(submit, "click")(
         fn=record,
         inputs=(trace, reviewer, action, revised_answer, notes),
         outputs=(outcome, preview, recent),
