@@ -1,5 +1,7 @@
 """Tests for inspectable semantic corpus retrieval."""
 
+import hashlib
+
 import pytest
 from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
@@ -110,6 +112,67 @@ def test_search_rejects_corrupt_internal_contribution_metadata() -> None:
 
     with pytest.raises(ValueError, match="Invalid internal retrieval-contribution metadata"):
         SemanticCorpusSearch(CorruptRetriever()).search("question")
+
+
+def test_search_reconstructs_exact_versioned_source_span() -> None:
+    """Carry absolute source offsets from index metadata into inspected evidence."""
+    text = "The exact source passage."
+    candidate = _candidate(
+        document_id="work-one",
+        title="First Work",
+        text=text,
+        score=0.9,
+        document_author_fraction=1.0,
+    )
+    candidate.node.metadata.update(
+        {
+            "source_span_version": "source-spans-v1",
+            "source_span_id": "exact-span",
+            "source_start_char": 17,
+            "source_end_char": 17 + len(text),
+            "source_text_hash": hashlib.sha256(text.encode()).hexdigest(),
+            "document_content_hash": "document-version",
+        }
+    )
+
+    class ExactSpanRetriever(BaseRetriever):
+        """Return one candidate with exact source provenance."""
+
+        def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+            """Return the versioned candidate."""
+            assert query_bundle.query_str
+            return [candidate]
+
+    passage = SemanticCorpusSearch(ExactSpanRetriever()).search("question").passages[0]
+
+    assert passage.evidence_span is not None
+    assert passage.evidence_span.span_id == "exact-span"
+    assert passage.evidence_span.start_char == 17
+    assert passage.evidence_span.text == text
+    assert passage.evidence_span.source_uris == ("https://example.test/first",)
+
+
+def test_search_rejects_partial_evidence_span_metadata() -> None:
+    """Fail closed when an index claims exact provenance without a complete range."""
+    candidate = _candidate(
+        document_id="work-one",
+        title="First Work",
+        text="Evidence.",
+        score=0.9,
+        document_author_fraction=1.0,
+    )
+    candidate.node.metadata["source_span_id"] = "incomplete"
+
+    class PartialSpanRetriever(BaseRetriever):
+        """Return one candidate with partial source provenance."""
+
+        def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+            """Return the corrupt candidate."""
+            assert query_bundle.query_str
+            return [candidate]
+
+    with pytest.raises(ValueError, match="Incomplete internal evidence-span metadata"):
+        SemanticCorpusSearch(PartialSpanRetriever()).search("question")
 
 
 def _candidate(

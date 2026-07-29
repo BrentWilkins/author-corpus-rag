@@ -13,6 +13,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from author_corpus.answering import GroundedAnswer
+from author_corpus.audit import EvidenceSpan, EvidenceValidationIssue, validate_evidence_spans
 from author_corpus.local_llm import LocalModelSettings, ReasoningEffort
 from author_corpus.models import CorpusDocument
 from author_corpus.retrieval import RetrievalContribution, RetrievedPassage, ScoreKind
@@ -81,6 +82,7 @@ class TracedEvidence(BaseModel):
     attributed_speakers: tuple[str, ...] = ()
     passage_text: str
     passage_hash: str
+    evidence_span_id: str | None = None
 
     @classmethod
     def from_passage(
@@ -98,7 +100,10 @@ class TracedEvidence(BaseModel):
             score_kind=passage.score_kind,
             retrieval_contributions=passage.retrieval_contributions,
             document_id=passage.document_id,
-            document_content_hash=document_content_hash,
+            document_content_hash=(
+                document_content_hash
+                or (passage.evidence_span.document_content_hash if passage.evidence_span is not None else None)
+            ),
             title=passage.title,
             source_uris=passage.source_uris,
             canonical_source_uri=passage.canonical_source_uri,
@@ -110,6 +115,7 @@ class TracedEvidence(BaseModel):
             attributed_speakers=passage.attributed_speakers,
             passage_text=passage.text,
             passage_hash=_text_hash(passage.text),
+            evidence_span_id=passage.evidence_span.span_id if passage.evidence_span is not None else None,
         )
 
 
@@ -122,6 +128,7 @@ class TraceFreshness(BaseModel):
     missing_document_ids: tuple[str, ...] = ()
     changed_document_ids: tuple[str, ...] = ()
     unversioned_document_ids: tuple[str, ...] = ()
+    evidence_issues: tuple[EvidenceValidationIssue, ...] = ()
 
 
 class QueryTrace(BaseModel):
@@ -137,18 +144,65 @@ class QueryTrace(BaseModel):
     answer: str
     cited_evidence_numbers: tuple[int, ...]
     evidence: tuple[TracedEvidence, ...]
+    evidence_spans: tuple[EvidenceSpan, ...] = ()
     retrieval: RetrievalTraceSettings
     generation: GenerationTraceSettings
     elapsed_seconds: float = Field(ge=0.0)
 
     @model_validator(mode="after")
     def validate_citations(self) -> Self:
-        """Require every citation to resolve to frozen evidence."""
+        """Require citations and optional source-span references to resolve."""
         available = {item.evidence_number for item in self.evidence}
+        if len(available) != len(self.evidence):
+            raise ValueError("Query trace contains duplicate evidence numbers.")
+        if len(set(self.cited_evidence_numbers)) != len(self.cited_evidence_numbers):
+            raise ValueError("Query trace contains duplicate citation numbers.")
         unavailable = set(self.cited_evidence_numbers) - available
         if unavailable:
             raise ValueError(f"Citations do not resolve to evidence: {sorted(unavailable)}.")
+        spans_by_id = {span.span_id: span for span in self.evidence_spans}
+        if len(spans_by_id) != len(self.evidence_spans):
+            raise ValueError("Query trace contains duplicate evidence span IDs.")
+        unresolved = {
+            item.evidence_span_id
+            for item in self.evidence
+            if item.evidence_span_id is not None and item.evidence_span_id not in spans_by_id
+        }
+        if unresolved:
+            raise ValueError(f"Traced evidence references unknown source spans: {sorted(unresolved)}.")
+        for item in self.evidence:
+            if item.evidence_span_id is None:
+                continue
+            span = spans_by_id[item.evidence_span_id]
+            if item.document_id != span.document_id:
+                raise ValueError("Traced evidence and its exact source span identify different documents.")
+            if item.passage_text != span.text or item.passage_hash != span.text_hash:
+                raise ValueError("Traced passage text does not match its exact source span.")
+            if item.document_content_hash is not None and item.document_content_hash != span.document_content_hash:
+                raise ValueError("Traced evidence and its exact source span identify different document versions.")
         return self
+
+    @property
+    def cited_evidence_spans(self) -> tuple[EvidenceSpan, ...]:
+        """Return exact source spans reached by the answer's citation markers."""
+        cited_numbers = set(self.cited_evidence_numbers)
+        span_ids = {
+            item.evidence_span_id
+            for item in self.evidence
+            if item.evidence_number in cited_numbers and item.evidence_span_id is not None
+        }
+        return tuple(span for span in self.evidence_spans if span.span_id in span_ids)
+
+    @property
+    def cited_span_coverage(self) -> tuple[int, int]:
+        """Return exact-span coverage as ``(covered citations, total citations)``."""
+        evidence_by_number = {item.evidence_number: item for item in self.evidence}
+        covered = sum(
+            evidence_by_number[number].evidence_span_id is not None
+            for number in self.cited_evidence_numbers
+            if number in evidence_by_number
+        )
+        return covered, len(self.cited_evidence_numbers)
 
     @classmethod
     def from_grounded_answer(
@@ -175,6 +229,11 @@ class QueryTrace(BaseModel):
             )
             for number, passage in enumerate(answer.evidence, start=1)
         )
+        spans_by_id = {
+            passage.evidence_span.span_id: passage.evidence_span
+            for passage in answer.evidence
+            if passage.evidence_span is not None
+        }
         return cls(
             trace_id=uuid4().hex,
             created_at=datetime.now(UTC),
@@ -184,13 +243,14 @@ class QueryTrace(BaseModel):
             answer=answer.answer,
             cited_evidence_numbers=answer.cited_evidence_numbers,
             evidence=evidence,
+            evidence_spans=tuple(spans_by_id.values()),
             retrieval=retrieval,
             generation=generation,
             elapsed_seconds=elapsed_seconds,
         )
 
     def check_freshness(self, documents: Mapping[str, CorpusDocument]) -> TraceFreshness:
-        """Compare traced document hashes with a current corpus snapshot."""
+        """Validate exact source ranges against a current corpus snapshot."""
         missing: list[str] = []
         changed: list[str] = []
         unversioned: list[str] = []
@@ -198,15 +258,21 @@ class QueryTrace(BaseModel):
             document = documents.get(item.document_id)
             if document is None:
                 missing.append(item.document_id)
-            elif item.document_content_hash is None:
+            elif item.evidence_span_id is None:
                 unversioned.append(item.document_id)
-            elif document.content_hash != item.document_content_hash:
+                if item.document_content_hash is not None and document.content_hash != item.document_content_hash:
+                    changed.append(item.document_id)
+            elif item.document_content_hash is not None and document.content_hash != item.document_content_hash:
                 changed.append(item.document_id)
+        evidence_issues = validate_evidence_spans(self.evidence_spans, documents)
+        missing.extend(issue.document_id for issue in evidence_issues if issue.code == "document_missing")
+        changed.extend(issue.document_id for issue in evidence_issues if issue.code == "document_changed")
         return TraceFreshness(
-            is_current=not missing and not changed and not unversioned,
+            is_current=not missing and not changed and not unversioned and not evidence_issues,
             missing_document_ids=tuple(sorted(set(missing))),
             changed_document_ids=tuple(sorted(set(changed))),
             unversioned_document_ids=tuple(sorted(set(unversioned))),
+            evidence_issues=evidence_issues,
         )
 
 

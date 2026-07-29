@@ -2,11 +2,13 @@
 
 from author_corpus.answering import GroundedAnswer, GroundedAnswerer
 from author_corpus.audit import (
+    EVIDENCE_SPAN_VERSION,
     AuditedClaim,
     ClaimRelation,
     EvidenceLedger,
     EvidenceSpan,
     EvidenceValidationIssue,
+    validate_evidence_spans,
 )
 from author_corpus.catalog import AuthorDocumentStats, CorpusCatalog
 from author_corpus.conversation import (
@@ -132,6 +134,7 @@ __all__ = [
     "ConversationRole",
     "ConversationTurn",
     "DocumentSummaryBuildResult",
+    "EVIDENCE_SPAN_VERSION",
     "EvidenceLedger",
     "EvidenceSpan",
     "EvidenceValidationIssue",
@@ -202,4 +205,5 @@ __all__ = [
     "route_query",
     "resolve_author_query",
     "resolve_conversation_query",
+    "validate_evidence_spans",
 ]

@@ -96,10 +96,14 @@ class CorpusQueryResult(BaseModel):
 
         timing_text = ", ".join(f"{timing.label} {timing.elapsed_seconds:.3f}s" for timing in self.timings)
         trace_text = "" if self.trace_id is None else f" · trace `{self.trace_id}`"
+        span_text = ""
+        if self.grounded_answer is not None and self.grounded_answer.cited_evidence_numbers:
+            covered, total = self.grounded_answer.cited_span_coverage
+            span_text = f" · exact evidence spans {covered}/{total}"
         identity_text = ""
         if self.author_resolution is not None and self.author_resolution.changed:
             identity_text = "\n\n_Retrieval resolved configured author references to the corpus-author identity._"
-        return f"{body}{identity_text}\n\n---\nRoute: `{self.decision.route.value}` · {timing_text}{trace_text}"
+        return f"{body}{identity_text}\n\n---\nRoute: `{self.decision.route.value}` · {timing_text}{span_text}{trace_text}"
 
 
 class CorpusQueryService:

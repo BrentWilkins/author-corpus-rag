@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from author_corpus.audit import AuditedClaim, ClaimRelation, EvidenceLedger, EvidenceSpan
+from author_corpus.audit import AuditedClaim, ClaimRelation, EvidenceLedger, EvidenceSpan, validate_evidence_spans
 from author_corpus.ingestion import load_corpus
 from author_corpus.persistence import corpus_fingerprint
 
@@ -107,6 +107,18 @@ def test_source_validation_detects_changed_document_snapshot() -> None:
 
     assert len(issues) == 1
     assert issues[0].code == "document_changed"
+
+
+def test_evidence_span_can_freeze_an_already_resolved_range() -> None:
+    """Create a span without ambiguous text-occurrence searching."""
+    document = load_corpus([FIXTURE_PATH]).documents[0]
+    text = "the route was closed during extreme heat"
+    start = document.content.index(text)
+
+    span = EvidenceSpan.from_range(document, start_char=start, end_char=start + len(text))
+
+    assert span.text == text
+    assert validate_evidence_spans((span,), {document.document_id: document}) == ()
 
 
 def test_resolved_claim_cannot_reference_missing_evidence() -> None:

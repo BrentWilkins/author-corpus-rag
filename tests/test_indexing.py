@@ -4,6 +4,7 @@ from pathlib import Path
 
 from llama_index.core.schema import MetadataMode
 
+from author_corpus.audit import EVIDENCE_SPAN_VERSION
 from author_corpus.indexing import INDEX_PIPELINE_VERSION, split_documents, vector_index_exists
 from author_corpus.models import CorpusDocument, SourceReference
 from author_corpus.persistence import CacheLayout
@@ -23,6 +24,11 @@ def test_structure_context_is_embedded_but_evidence_remains_original() -> None:
     assert "Synthetic Guide" in embedded
     assert "Guide > Safety Tip" in embedded
     assert safety.metadata["index_pipeline_version"] == INDEX_PIPELINE_VERSION
+    assert safety.metadata["source_span_version"] == EVIDENCE_SPAN_VERSION
+    start = int(safety.metadata["source_start_char"])
+    end = int(safety.metadata["source_end_char"])
+    assert document.content[start:end] == evidence
+    assert safety.metadata["document_content_hash"] == document.content_hash
 
 
 def test_giant_sections_are_capped_without_losing_quote_provenance() -> None:

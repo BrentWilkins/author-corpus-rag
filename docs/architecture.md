@@ -216,6 +216,9 @@ erDiagram
     SOURCE_CHUNK ||--|{ VOICE_SPAN : contains
     QUERY_TRACE ||--|{ TRACED_EVIDENCE : records
     CORPUS_DOCUMENT ||--o{ TRACED_EVIDENCE : validated_by_hash
+    CORPUS_DOCUMENT ||--o{ EVIDENCE_SPAN : freezes_range
+    QUERY_TRACE ||--o{ EVIDENCE_SPAN : records
+    TRACED_EVIDENCE }o--o| EVIDENCE_SPAN : resolves_to
 
     CORPUS_DOCUMENT {
         string document_id PK
@@ -242,6 +245,8 @@ erDiagram
         string document_id FK
         string section_path
         string source_text
+        int source_start_char
+        int source_end_char
     }
     VOICE_SPAN {
         string label
@@ -259,17 +264,31 @@ erDiagram
         string document_id
         string passage_hash
         string document_content_hash
+        string evidence_span_id
         int rank
         string score_kind
+    }
+    EVIDENCE_SPAN {
+        string span_id PK
+        string document_id FK
+        string document_content_hash
+        int start_char
+        int end_char
+        string text_hash
     }
 ```
 
 Generated answers are evidence views, not durable corpus truth. Query traces
 retain the literal user question, contextualized retrieval query, passage
 hashes, document hashes, retrieval settings, prompt/model settings, citations,
-and elapsed time so an answer can be marked stale when its sources change. Both
-the notebook and the chat query service persist generated semantic answers
-through the same local trace store.
+exact half-open ranges in normalized `CorpusDocument.content`, and elapsed time.
+Citation markers resolve through traced evidence to versioned `EvidenceSpan`
+records, so validation can detect a missing document, changed document version,
+out-of-bounds range, or changed text at that range. These are normalized-corpus
+offsets, not byte offsets into original HTML or PDF files. Older trace JSON
+remains readable but is marked unversioned when it has no exact span. Both the
+notebook and the chat query service persist generated semantic answers through
+the same local trace store.
 
 ## Cache and rebuild boundaries
 
@@ -279,7 +298,7 @@ through the same local trace store.
 | Vector index | Fingerprinted local cache | Corpus, embedding model, chunking, or pipeline version changes | Dense retrieval |
 | BM25 index | Fingerprinted local cache with completion manifest | Vector node set or lexical pipeline changes | Exact-term retrieval arm |
 | Document summaries | SQLite cache | Document hash, model, prompt, or summary settings change | Experimental navigation only |
-| Query traces | SQLite cache | Append-only per generated answer | Reproducibility and staleness checks |
+| Query traces | SQLite cache | Append-only per generated answer | Citation-to-span provenance, reproducibility, and staleness checks |
 
 Caching improves latency; it does not upgrade generated summaries into source
 evidence. Exact queries always read normalized metadata, and grounded answers
@@ -296,14 +315,16 @@ always cite retrieved source passages.
 4. Semantic results always report `exhaustive=False`.
 5. Generation uses the exact passages already returned for inspection.
 6. Factual answer paragraphs require valid numbered evidence markers.
-7. Quoted speech is not attributed to a document author merely because it
+7. Current-index citation markers resolve to exact versioned source ranges;
+   historical traces without ranges remain explicitly unversioned.
+8. Quoted speech is not attributed to a document author merely because it
    appears in that author's article.
-8. Conversation context uses previous user wording only; prior model output is
+9. Conversation context uses previous user wording only; prior model output is
    never treated as retrieval evidence.
-9. Semantic author aliases are explicit private configuration, are checked for
+10. Semantic author aliases are explicit private configuration, are checked for
    catalog collisions, and are never inferred with fuzzy matching.
-10. Score kinds remain explicit and incomparable across retrieval methods.
-11. Private corpus configuration, evaluation labels, caches, and notebook output
+11. Score kinds remain explicit and incomparable across retrieval methods.
+12. Private corpus configuration, evaluation labels, caches, and notebook output
     stay outside version control.
 
 ## Component map
@@ -323,5 +344,5 @@ always cite retrieved source passages.
 | Private runtime loading | `src/author_corpus/runtime.py` |
 | Local conversational UI | `src/author_corpus/ui.py` |
 | Citation-constrained generation | `src/author_corpus/answering.py` |
-| Answer audit trail | `src/author_corpus/tracing.py`, `audit.py` |
+| Exact evidence spans and answer audit trail | `src/author_corpus/audit.py`, `tracing.py` |
 | Notebook and maintenance entry points | `notebooks/`, `src/author_corpus/cli.py` |

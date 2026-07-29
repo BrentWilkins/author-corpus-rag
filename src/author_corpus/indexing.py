@@ -15,13 +15,14 @@ from llama_index.core.base.embeddings.base import BaseEmbedding
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.schema import BaseNode, MetadataMode, TextNode
 
+from author_corpus.audit import EVIDENCE_SPAN_VERSION, EvidenceSpan
 from author_corpus.models import CorpusDocument
 from author_corpus.persistence import CacheLayout
 from author_corpus.structure import MARKDOWN_STRUCTURE_VERSION, MarkdownSection, split_markdown_sections
 from author_corpus.voice import VOICE_ANALYSIS_VERSION, VoiceAnalysis, analyze_voice, slice_voice_analysis
 
 VECTOR_INDEX_ID = "author-corpus-vector"
-INDEX_PIPELINE_VERSION = f"{MARKDOWN_STRUCTURE_VERSION}+{VOICE_ANALYSIS_VERSION}"
+INDEX_PIPELINE_VERSION = f"{MARKDOWN_STRUCTURE_VERSION}+{VOICE_ANALYSIS_VERSION}+{EVIDENCE_SPAN_VERSION}"
 
 _EMBED_CONTEXT_KEYS = frozenset({"title", "section_context", "section_lead"})
 _REQUIRED_INDEX_FILES = frozenset({"default__vector_store.json", "docstore.json", "index_store.json"})
@@ -59,6 +60,7 @@ def split_documents(
             section_voice = analyze_voice(section.text)
             for node in section_nodes:
                 voice, offset_basis = _node_voice(node, section, section_voice)
+                evidence_span = _node_evidence_span(node, document, section)
                 node.metadata.update(
                     {
                         "voice_analysis_version": voice.version,
@@ -70,10 +72,45 @@ def split_documents(
                         "attributed_speakers": json.dumps(list(voice.attributed_speakers), ensure_ascii=False),
                     }
                 )
+                if evidence_span is not None:
+                    node.metadata.update(
+                        {
+                            "source_span_version": EVIDENCE_SPAN_VERSION,
+                            "source_span_id": evidence_span.span_id,
+                            "source_start_char": evidence_span.start_char,
+                            "source_end_char": evidence_span.end_char,
+                            "source_text_hash": evidence_span.text_hash,
+                            "document_content_hash": evidence_span.document_content_hash,
+                        }
+                    )
                 node.excluded_embed_metadata_keys = [key for key in node.metadata if key not in _EMBED_CONTEXT_KEYS]
                 node.excluded_llm_metadata_keys = list(node.metadata)
             nodes.extend(section_nodes)
     return nodes
+
+
+def _node_evidence_span(
+    node: BaseNode,
+    document: CorpusDocument,
+    section: MarkdownSection,
+) -> EvidenceSpan | None:
+    """Resolve a chunk to an exact absolute range in the normalized source."""
+    if not isinstance(node, TextNode):
+        return None
+    node_text = node.get_content(metadata_mode=MetadataMode.NONE)
+    start = node.start_char_idx
+    end = node.end_char_idx
+    if start is None or end is None or section.text[start:end] != node_text:
+        return None
+    absolute_start = section.start + start
+    absolute_end = section.start + end
+    if document.content[absolute_start:absolute_end] != node_text:
+        return None
+    return EvidenceSpan.from_range(
+        document,
+        start_char=absolute_start,
+        end_char=absolute_end,
+    )
 
 
 def _node_voice(

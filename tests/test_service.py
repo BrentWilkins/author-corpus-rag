@@ -128,6 +128,7 @@ def test_semantic_generation_reuses_the_inspected_retrieval(tmp_path: Path) -> N
     assert result.semantic.strategy == "hybrid_evidence"
     assert result.grounded_answer is not None
     assert result.grounded_answer.evidence == result.semantic.passages
+    assert "exact evidence spans 0/1" in result.to_markdown()
     assert result.trace_id is not None
     assert service.trace_context is not None
     trace = service.trace_context.store.get(result.trace_id)

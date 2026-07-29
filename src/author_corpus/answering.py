@@ -7,6 +7,7 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict
 
+from author_corpus.audit import EvidenceSpan
 from author_corpus.retrieval import RetrievedPassage, SemanticCorpusSearch, SemanticSearchResult
 
 ANSWER_PROMPT_VERSION = "grounded-answer-v1"
@@ -35,6 +36,16 @@ class GroundedAnswer(BaseModel):
     def cited_evidence(self) -> tuple[tuple[int, RetrievedPassage], ...]:
         """Return cited evidence paired with its original citation number."""
         return tuple((number, self.evidence[number - 1]) for number in self.cited_evidence_numbers)
+
+    @property
+    def cited_evidence_spans(self) -> tuple[EvidenceSpan, ...]:
+        """Return exact versioned source ranges reached by citation markers."""
+        return tuple(passage.evidence_span for _, passage in self.cited_evidence if passage.evidence_span is not None)
+
+    @property
+    def cited_span_coverage(self) -> tuple[int, int]:
+        """Return exact-span coverage as ``(covered citations, total citations)``."""
+        return len(self.cited_evidence_spans), len(self.cited_evidence_numbers)
 
     def to_markdown(self) -> str:
         """Render the answer followed by clickable sources it actually cites."""

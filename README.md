@@ -151,11 +151,15 @@ passage text and source URIs so retrieval can be inspected before an LLM writes
 an answer. Grounded answers retain the exact evidence supplied to the model and
 render only the sources the answer cites as clickable links. Each generated
 answer is also saved to the ignored
-`.cache/query_traces.sqlite3` database with its retrieved passage text, passage
-hashes, document content hashes, model and prompt settings, corpus fingerprint,
-citations, retrieval strategy, score semantics, component ranks and scores, and
-elapsed generation time. A historical trace can therefore be marked stale when
-its source documents change.
+`.cache/<corpus-fingerprint>/query_traces.sqlite3` database with its retrieved
+passage text, exact character ranges in normalized `CorpusDocument.content`,
+passage and document hashes, model and prompt settings, corpus fingerprint,
+citations, retrieval strategy, score semantics, component ranks and scores,
+and elapsed generation time. Citation markers resolve to versioned
+`EvidenceSpan` records rather than only copied passage text. Historical records
+created before span-aware indexing still load, but are explicitly reported as
+unversioned; current traces can be validated against the exact normalized
+source range as well as the document hash.
 
 Dense cosine similarity, BM25 relevance, and reciprocal-rank-fusion values are
 different score types. They must not be compared as if they shared a confidence

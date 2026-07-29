@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from author_corpus.models import CorpusDocument
+
+EVIDENCE_SPAN_VERSION = "source-spans-v1"
 
 ClaimStatus = Literal["pending", "supported", "qualified", "contradicted", "unsupported"]
 ClaimRelationKind = Literal["supports", "qualifies", "contradicts", "updates"]
@@ -67,6 +69,35 @@ class EvidenceSpan(BaseModel):
             document_content_hash=document.content_hash,
             start_char=start_char,
             end_char=start_char + len(text),
+            text=text,
+            text_hash=_text_hash(text),
+            source_uris=tuple(source.uri for source in document.sources),
+        )
+
+    @classmethod
+    def from_range(
+        cls,
+        document: CorpusDocument,
+        *,
+        start_char: int,
+        end_char: int,
+        span_id: str | None = None,
+    ) -> EvidenceSpan:
+        """Freeze an already-resolved half-open range in one source version."""
+        if start_char < 0:
+            raise ValueError("start_char must not be negative.")
+        if end_char <= start_char:
+            raise ValueError("end_char must be greater than start_char.")
+        if end_char > len(document.content):
+            raise ValueError("Evidence range extends beyond the source document.")
+        text = document.content[start_char:end_char]
+        resolved_span_id = span_id or _span_id(document.document_id, start_char, text)
+        return cls(
+            span_id=resolved_span_id,
+            document_id=document.document_id,
+            document_content_hash=document.content_hash,
+            start_char=start_char,
+            end_char=end_char,
             text=text,
             text_hash=_text_hash(text),
             source_uris=tuple(source.uri for source in document.sources),
@@ -163,24 +194,32 @@ class EvidenceLedger(BaseModel):
 
     def validate_sources(self, documents: Mapping[str, CorpusDocument]) -> tuple[EvidenceValidationIssue, ...]:
         """Check every frozen span against the current raw corpus snapshot."""
-        issues: list[EvidenceValidationIssue] = []
-        for span in self.evidence_spans:
-            document = documents.get(span.document_id)
-            if document is None:
-                issues.append(_evidence_issue(span, "document_missing", "The source document is not in the current corpus."))
-                continue
-            if document.content_hash != span.document_content_hash:
-                issues.append(_evidence_issue(span, "document_changed", "The source document content hash changed."))
-                continue
-            if span.end_char > len(document.content):
-                issues.append(_evidence_issue(span, "span_out_of_bounds", "The source span is outside the current document."))
-                continue
-            current_text = document.content[span.start_char : span.end_char]
-            if current_text != span.text:
-                issues.append(_evidence_issue(span, "span_text_changed", "The text at the recorded source range changed."))
-            elif _text_hash(current_text) != span.text_hash:
-                issues.append(_evidence_issue(span, "span_hash_invalid", "The source span hash is invalid."))
-        return tuple(issues)
+        return validate_evidence_spans(self.evidence_spans, documents)
+
+
+def validate_evidence_spans(
+    spans: Sequence[EvidenceSpan],
+    documents: Mapping[str, CorpusDocument],
+) -> tuple[EvidenceValidationIssue, ...]:
+    """Check frozen spans against the exact text of a current corpus snapshot."""
+    issues: list[EvidenceValidationIssue] = []
+    for span in spans:
+        document = documents.get(span.document_id)
+        if document is None:
+            issues.append(_evidence_issue(span, "document_missing", "The source document is not in the current corpus."))
+            continue
+        if document.content_hash != span.document_content_hash:
+            issues.append(_evidence_issue(span, "document_changed", "The source document content hash changed."))
+            continue
+        if span.end_char > len(document.content):
+            issues.append(_evidence_issue(span, "span_out_of_bounds", "The source span is outside the current document."))
+            continue
+        current_text = document.content[span.start_char : span.end_char]
+        if current_text != span.text:
+            issues.append(_evidence_issue(span, "span_text_changed", "The text at the recorded source range changed."))
+        elif _text_hash(current_text) != span.text_hash:
+            issues.append(_evidence_issue(span, "span_hash_invalid", "The source span hash is invalid."))
+    return tuple(issues)
 
 
 def _occurrence_start(content: str, text: str, *, occurrence: int) -> int:

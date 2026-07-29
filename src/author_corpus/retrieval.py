@@ -11,9 +11,21 @@ from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.schema import MetadataMode, NodeWithScore
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
+from author_corpus.audit import EVIDENCE_SPAN_VERSION, EvidenceSpan
+
 ScoreKind = Literal["cosine_similarity", "bm25", "reciprocal_rank_fusion", "unknown"]
 
 _RETRIEVAL_CONTRIBUTIONS_KEY = "_retrieval_contributions"
+_EVIDENCE_SPAN_METADATA_KEYS = frozenset(
+    {
+        "source_span_version",
+        "source_span_id",
+        "source_start_char",
+        "source_end_char",
+        "source_text_hash",
+        "document_content_hash",
+    }
+)
 
 
 class RetrievalContribution(BaseModel):
@@ -51,6 +63,7 @@ class RetrievedPassage(BaseModel):
     uncertain_voice_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
     attributed_speakers: tuple[str, ...] = ()
     text: str
+    evidence_span: EvidenceSpan | None = None
 
 
 class SemanticSearchResult(BaseModel):
@@ -165,6 +178,8 @@ def _to_passage(
 ) -> RetrievedPassage:
     metadata: Mapping[str, object] = candidate.node.metadata
     canonical_source_uri = _optional_text(metadata.get("canonical_source_uri"))
+    source_uris = _string_sequence(metadata.get("source_uris"))
+    text = candidate.node.get_content(metadata_mode=MetadataMode.NONE)
     return RetrievedPassage(
         rank=rank,
         score=candidate.score,
@@ -181,7 +196,7 @@ def _to_passage(
         authors=_string_sequence(metadata.get("authors")),
         published_at=_optional_text(metadata.get("published_at")),
         document_type=_optional_text(metadata.get("document_type")) or "document",
-        source_uris=_string_sequence(metadata.get("source_uris")),
+        source_uris=source_uris,
         canonical_source_uri=canonical_source_uri,
         section_path=_string_sequence(metadata.get("section_path")),
         passage_voice=_passage_voice(metadata.get("passage_voice")),
@@ -189,7 +204,13 @@ def _to_passage(
         quoted_speech_fraction=_optional_float(metadata.get("quoted_speech_fraction")),
         uncertain_voice_fraction=_optional_float(metadata.get("uncertain_voice_fraction")),
         attributed_speakers=_string_sequence(metadata.get("attributed_speakers")),
-        text=candidate.node.get_content(metadata_mode=MetadataMode.NONE).strip(),
+        text=text,
+        evidence_span=_evidence_span(
+            metadata,
+            document_id=document_id,
+            source_uris=source_uris,
+            text=text,
+        ),
     )
 
 
@@ -221,6 +242,50 @@ def _optional_float(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
+
+
+def _evidence_span(
+    metadata: Mapping[str, object],
+    *,
+    document_id: str,
+    source_uris: tuple[str, ...],
+    text: str,
+) -> EvidenceSpan | None:
+    present = _EVIDENCE_SPAN_METADATA_KEYS.intersection(metadata)
+    if not present:
+        return None
+    missing = _EVIDENCE_SPAN_METADATA_KEYS - present
+    if missing:
+        raise ValueError(f"Incomplete internal evidence-span metadata: {sorted(missing)}.")
+    version = _optional_text(metadata.get("source_span_version"))
+    if version != EVIDENCE_SPAN_VERSION:
+        raise ValueError(f"Unsupported internal evidence-span version: {version!r}.")
+    return EvidenceSpan(
+        span_id=_required_text(metadata.get("source_span_id"), key="source_span_id"),
+        document_id=document_id,
+        document_content_hash=_required_text(
+            metadata.get("document_content_hash"),
+            key="document_content_hash",
+        ),
+        start_char=_required_int(metadata.get("source_start_char"), key="source_start_char"),
+        end_char=_required_int(metadata.get("source_end_char"), key="source_end_char"),
+        text=text,
+        text_hash=_required_text(metadata.get("source_text_hash"), key="source_text_hash"),
+        source_uris=source_uris,
+    )
+
+
+def _required_text(value: object, *, key: str) -> str:
+    result = _optional_text(value)
+    if result is None:
+        raise ValueError(f"Invalid internal evidence-span metadata field {key!r}.")
+    return result
+
+
+def _required_int(value: object, *, key: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"Invalid internal evidence-span metadata field {key!r}.")
+    return value
 
 
 def _passage_voice(

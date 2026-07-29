@@ -49,6 +49,14 @@ def test_notebook_uses_configured_author_identity_for_retrieval_and_grounding() 
     assert "question=author_resolution.grounding_question" in notebook_text
 
 
+def test_notebook_reports_exact_cited_span_coverage() -> None:
+    """Expose whether persisted citations resolve to versioned source ranges."""
+    notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
+
+    assert "query_trace.cited_span_coverage" in notebook_text
+    assert "exact cited evidence spans:" in notebook_text
+
+
 def test_notebook_does_not_send_exact_catalog_questions_to_semantic_search() -> None:
     """Execute exact metadata safely without non-exhaustive retrieval or generation."""
     notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
