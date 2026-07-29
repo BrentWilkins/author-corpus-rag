@@ -11,9 +11,11 @@ from author_corpus.ingestion import load_corpus
 from author_corpus.reasoning import (
     BoundedReasoningEngine,
     ConservativeClaimVerifier,
+    StructuredSemanticClaimVerifier,
     plan_reasoning,
     requires_multistep_reasoning,
 )
+from author_corpus.reasoning_models import ClaimVerification
 from author_corpus.retrieval import SemanticCorpusSearch
 from author_corpus.scope import AuthorScope
 
@@ -79,6 +81,95 @@ def test_reasoning_retries_once_then_abstains_on_unsupported_claim(tmp_path: Pat
     assert len(result.reasoning.rounds) == 2
     assert result.reasoning.rounds[-1].verifications[0].may_answer is False
     assert len(retriever.queries) == 2
+
+
+def test_semantic_verifier_accepts_a_supported_claim_with_exact_evidence(tmp_path: Path) -> None:
+    """Use structured semantic verification only after exact provenance guards pass."""
+    search, _retriever = _search(tmp_path)
+    prompts: list[str] = []
+
+    def complete(prompt: str) -> str:
+        prompts.append(prompt)
+        if prompt.startswith("Classify whether each claim"):
+            return (
+                '{"claims":[{"candidate_id":"batch-candidate-1","status":"supported",'
+                '"rationale":"The evidence states the complete condition.","verified_statement":null}]}'
+            )
+        return "The route closes during extreme heat [1]."
+
+    engine = BoundedReasoningEngine(
+        search,
+        complete,
+        model_id="test-model",
+        verifier=StructuredSemanticClaimVerifier(complete),
+    )
+
+    result = engine.answer("When does the route close?")
+
+    verification = result.reasoning.rounds[0].verifications[0]
+    assert verification.status == "supported"
+    assert verification.verifier_id == "structured-semantic-v1"
+    assert result.grounded_answer.answer == "The route closes during extreme heat. [1]"
+    assert sum(prompt.startswith("Classify whether each claim") for prompt in prompts) == 1
+
+
+def test_semantic_verifier_renders_only_its_explicit_narrower_claim(tmp_path: Path) -> None:
+    """Never retain the broader draft when semantic evidence supports only a qualification."""
+    search, _retriever = _search(tmp_path)
+
+    def complete(prompt: str) -> str:
+        if prompt.startswith("Classify whether each claim"):
+            return (
+                '{"claims":[{"candidate_id":"batch-candidate-1","status":"qualified",'
+                '"rationale":"The evidence establishes only an extreme-heat condition.",'
+                '"verified_statement":"The route closes during extreme heat."}]}'
+            )
+        return "The route closes [1]."
+
+    result = BoundedReasoningEngine(
+        search,
+        complete,
+        model_id="test-model",
+        verifier=StructuredSemanticClaimVerifier(complete),
+    ).answer("Does the route close?")
+
+    verification = result.reasoning.rounds[0].verifications[0]
+    assert verification.status == "qualified"
+    assert verification.statement == "The route closes."
+    assert verification.verified_statement == "The route closes during extreme heat."
+    assert result.grounded_answer.answer == "The route closes during extreme heat. [1]"
+
+
+def test_semantic_verifier_fails_closed_on_invalid_structured_output(tmp_path: Path) -> None:
+    """Treat malformed model output as uncertain instead of guessing a status."""
+    search, _retriever = _search(tmp_path)
+
+    def complete(prompt: str) -> str:
+        return "not JSON" if prompt.startswith("Classify whether each claim") else "The route closes during extreme heat [1]."
+
+    result = BoundedReasoningEngine(
+        search,
+        complete,
+        model_id="test-model",
+        verifier=StructuredSemanticClaimVerifier(complete),
+    ).answer("When does the route close?")
+
+    assert result.grounded_answer.answer == "The retrieved evidence is insufficient to answer this question."
+    assert result.reasoning.rounds[-1].verifications[0].status == "uncertain"
+
+
+def test_legacy_qualified_verification_loads_but_cannot_enter_an_answer() -> None:
+    """Keep old traces readable without treating an implicit qualification as safe prose."""
+    verification = ClaimVerification(
+        candidate_id="legacy-candidate",
+        statement="The route closes.",
+        citation_numbers=(1,),
+        status="qualified",
+        rationale="Legacy lexical qualification.",
+    )
+
+    assert verification.verifier_id == "legacy-conservative-v0"
+    assert verification.may_answer is False
 
 
 def _search(tmp_path: Path) -> tuple[SemanticCorpusSearch, StaticEvidenceRetriever]:

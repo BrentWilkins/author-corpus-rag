@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -14,7 +15,7 @@ from author_corpus.exact import ExactCatalogResult, execute_catalog_query
 from author_corpus.hybrid import RetrievalProfiles
 from author_corpus.identity import AuthorIdentity, AuthorQueryResolution, resolve_author_query
 from author_corpus.local_llm import LocalModelSettings
-from author_corpus.reasoning import BoundedReasoningEngine
+from author_corpus.reasoning import BoundedReasoningEngine, StructuredSemanticClaimVerifier
 from author_corpus.reasoning_models import ReasoningTrace
 from author_corpus.retrieval import SemanticCorpusSearch, SemanticSearchResult
 from author_corpus.routing import QueryRoute, QueryRouteDecision, route_query
@@ -25,6 +26,8 @@ from author_corpus.tracing import (
     QueryTraceStore,
     RetrievalTraceSettings,
 )
+
+VerifierMode = Literal["conservative", "semantic"]
 
 
 class QueryTiming(BaseModel):
@@ -109,7 +112,13 @@ class CorpusQueryResult(BaseModel):
             span_text = f" · exact evidence spans {covered}/{total}"
         reasoning_text = ""
         if self.reasoning is not None:
-            reasoning_text = f" · bounded reasoning {len(self.reasoning.rounds)} round(s)"
+            verifier_ids = tuple(
+                dict.fromkeys(
+                    verification.verifier_id for round_ in self.reasoning.rounds for verification in round_.verifications
+                )
+            )
+            verifier_text = ", ".join(verifier_ids) if verifier_ids else "no extracted claims"
+            reasoning_text = f" · bounded reasoning {len(self.reasoning.rounds)} round(s) · verifier `{verifier_text}`"
         identity_text = ""
         if self.author_resolution is not None and self.author_resolution.changed:
             identity_text = "\n\n_Retrieval resolved configured author references to the corpus-author identity._"
@@ -166,11 +175,14 @@ class CorpusQueryService:
         retrieval_query: str | None = None,
         generate: bool = True,
         reason: bool = False,
+        verifier: VerifierMode = "conservative",
     ) -> CorpusQueryResult:
         """Execute one question without allowing context to alter exact routing."""
         normalized_query = query.strip()
         if not normalized_query:
             raise ValueError("Query must not be empty.")
+        if verifier not in {"conservative", "semantic"}:
+            raise ValueError(f"Unknown verifier mode: {verifier!r}.")
 
         route_started = perf_counter()
         decision = route_query(normalized_query)
@@ -205,6 +217,7 @@ class CorpusQueryService:
                 search,
                 self.complete,
                 model_id=self.model_id,
+                verifier=StructuredSemanticClaimVerifier(self.complete) if verifier == "semantic" else None,
             ).answer(
                 author_resolution.grounding_question,
                 retrieval_question=effective_query,
@@ -215,6 +228,22 @@ class CorpusQueryService:
             answer = reasoned.grounded_answer
             reasoning = reasoned.reasoning
             answer_elapsed_seconds = perf_counter() - reasoning_started
+            timings.extend(
+                (
+                    QueryTiming(
+                        label="reasoning retrieval",
+                        elapsed_seconds=sum(round_.retrieval_seconds for round_ in reasoning.rounds),
+                    ),
+                    QueryTiming(
+                        label="reasoning generation",
+                        elapsed_seconds=sum(round_.generation_seconds for round_ in reasoning.rounds),
+                    ),
+                    QueryTiming(
+                        label="claim verification",
+                        elapsed_seconds=sum(round_.verification_seconds for round_ in reasoning.rounds),
+                    ),
+                )
+            )
             timings.append(QueryTiming(label="bounded reasoning", elapsed_seconds=answer_elapsed_seconds))
         else:
             retrieval_started = perf_counter()

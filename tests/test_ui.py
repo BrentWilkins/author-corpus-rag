@@ -41,7 +41,7 @@ def test_builds_gradio_chat_without_starting_a_server() -> None:
     assert interface.save_history is False
     assert interface.chatbot.height == "72vh"
     assert interface.chatbot.min_height == 480
-    assert len(interface.additional_inputs) == 1
+    assert len(interface.additional_inputs) == 2
 
 
 def test_gradio_history_keeps_user_text_and_discards_assistant_output() -> None:

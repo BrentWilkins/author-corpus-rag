@@ -23,8 +23,10 @@ queries, persistent dense/BM25 retrieval, citation-constrained answers,
 structure and voice provenance, repeatable retrieval and claim evaluation, and
 durable exact-span traces. An opt-in bounded reasoning path decomposes hard
 questions, retrieves per component, verifies citation-bound claims, and makes
-at most one corrective pass. Its conservative verifier admits only supported
-or qualified exact-span claims and remains an evaluated heuristic rather than
+at most one corrective pass. Its default conservative verifier admits only
+supported exact-span claims. An experimental structured semantic verifier can
+also replace an overbroad draft with an explicit evidence-supported narrower
+claim, but remains opt-in pending private holdout results. Neither verifier is
 proof.
 
 Explicit author scopes now flow through traces, reasoning, synthesis, and
@@ -103,7 +105,11 @@ sentences, uncited prose, exact-span coverage, and per-evidence heuristic labels
 without creating proposals or changing either audit database.
 
 The chat's collapsed **Reasoning options** panel enables bounded claim-level
-reasoning for an individual question. This slower path is off by default. A
+reasoning for an individual question. This slower path is off by default. Its
+verifier selector defaults to the deterministic conservative baseline; the
+structured semantic alternative adds batched local-model calls and is visibly
+labeled experimental. Reasoning output reports retrieval, generation, claim
+verification, total reasoning, and trace-persistence timings separately. A
 separate answer-review tab can accept, revise, or reject a historical answer.
 Accept and revise require current exact spans for every citation; ordinary chat
 use never counts as approval.
@@ -127,6 +133,33 @@ cases:
     expected_label: supports
     category: factual_support
 ```
+
+Compare the conservative and semantic aggregate verifiers on identical,
+source-current private claims:
+
+```bash
+uv run --extra local author-corpus evaluate-verifiers \
+  --cases verifier-holdout.local.yaml
+```
+
+Each aggregate label applies to a complete generated claim and all of its
+citations:
+
+```yaml
+cases:
+  - name: example-entailment-case
+    trace_id: replace-with-local-trace-id
+    candidate_id: replace-with-local-candidate-id
+    expected_status: supported
+    category: direct_entailment
+```
+
+The command reports exact-status accuracy, non-abstention coverage, accuracy
+among answered cases, false acceptance of claims that should not be answered,
+and elapsed time for each verifier. Keep tuned development cases separate from
+unseen query and source groups. Do not promote the semantic verifier merely
+because it has higher coverage; it must preserve an acceptable false-acceptance
+rate on the unseen split.
 
 Export accepted and revised answers together with the frozen evidence shown to
 the model:
@@ -364,6 +397,13 @@ Private trace-derived labels can be measured separately with
 `evaluate-generated-claims`. Keep development examples separate from unseen
 query/source groups; production rules should address demonstrated failure
 classes rather than individual corpus questions.
+
+Aggregate decisions can be compared with `evaluate-verifiers`. The semantic
+verifier runs only when explicitly selected in the UI/service or by that
+command. Before changing the default, grow the private set across multiple
+authors, document types, source sites, coauthored work, quotations, direct
+support, qualifications, contradictions, and missing evidence. This split is
+the main defense against fitting thresholds or prompts to one corpus.
 
 ## Privacy boundary
 

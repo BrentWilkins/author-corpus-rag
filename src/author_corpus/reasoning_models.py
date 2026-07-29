@@ -52,13 +52,31 @@ class ClaimVerification(BaseModel):
     statement: str = Field(min_length=1)
     citation_numbers: tuple[int, ...] = Field(min_length=1)
     status: VerificationStatus
+    verifier_id: str = Field(default="legacy-conservative-v0", min_length=1)
     decisions: tuple[ClaimEvidenceDecision, ...] = ()
     rationale: str = Field(min_length=1)
+    verified_statement: str | None = None
+
+    @model_validator(mode="after")
+    def prevent_supported_rewrites(self) -> ClaimVerification:
+        """Prevent a fully supported decision from silently changing its claim."""
+        if (
+            self.status == "supported"
+            and self.verified_statement is not None
+            and _normalized(self.verified_statement) != _normalized(self.statement)
+        ):
+            raise ValueError("A supported verification cannot silently rewrite the claim.")
+        return self
 
     @property
     def may_answer(self) -> bool:
         """Return whether this claim may appear in an automatic final answer."""
-        return self.status in {"supported", "qualified"}
+        return self.status == "supported" or (self.status == "qualified" and bool(_normalized(self.verified_statement)))
+
+    @property
+    def answer_statement(self) -> str:
+        """Return the exact statement safe for final answer rendering."""
+        return self.verified_statement or self.statement
 
 
 class ReasoningRound(BaseModel):
@@ -100,3 +118,7 @@ class ReasonedAnswer(BaseModel):
         if self.grounded_answer.evidence != self.search_result.passages:
             raise ValueError("A reasoned answer must retain the evidence returned for inspection.")
         return self
+
+
+def _normalized(value: str | None) -> str:
+    return "" if value is None else " ".join(value.strip().split())

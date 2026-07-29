@@ -102,6 +102,7 @@ from author_corpus.reasoning import (
     BoundedReasoningEngine,
     ClaimVerifier,
     ConservativeClaimVerifier,
+    StructuredSemanticClaimVerifier,
     plan_reasoning,
     requires_multistep_reasoning,
 )
@@ -143,7 +144,7 @@ from author_corpus.routing import (
 )
 from author_corpus.runtime import QueryRuntime, RuntimeSettings, load_query_runtime
 from author_corpus.scope import AuthorScope
-from author_corpus.service import CorpusQueryResult, CorpusQueryService, QueryTiming, QueryTraceContext
+from author_corpus.service import CorpusQueryResult, CorpusQueryService, QueryTiming, QueryTraceContext, VerifierMode
 from author_corpus.summaries import (
     CachedChunkSummary,
     CachedCorpusSynthesis,
@@ -179,6 +180,14 @@ from author_corpus.tracing import (
     RetrievalTraceSettings,
     TracedEvidence,
     TraceFreshness,
+)
+from author_corpus.verifier_evaluation import (
+    VerifierCaseResult,
+    VerifierComparison,
+    VerifierEvaluation,
+    VerifierEvaluationCase,
+    evaluate_verifiers,
+    load_verifier_cases,
 )
 from author_corpus.voice import VoiceAnalysis, VoiceSpan, analyze_voice
 from author_corpus.workflow import NotebookRunOptions
@@ -294,6 +303,7 @@ __all__ = [
     "SynthesisCoverage",
     "SummaryProgress",
     "SummaryStore",
+    "StructuredSemanticClaimVerifier",
     "TimingLog",
     "TimingRecord",
     "TrainingEvidence",
@@ -301,6 +311,11 @@ __all__ = [
     "TracedEvidence",
     "VoiceAnalysis",
     "VoiceSpan",
+    "VerifierCaseResult",
+    "VerifierComparison",
+    "VerifierEvaluation",
+    "VerifierEvaluationCase",
+    "VerifierMode",
     "ReviewedTrainingExample",
     "analyze_voice",
     "apply_claim_review",
@@ -316,6 +331,7 @@ __all__ = [
     "evaluate_generated_claims",
     "evaluate_retrieval",
     "evaluate_retrieval_strategies",
+    "evaluate_verifiers",
     "evaluate_query_router",
     "execute_catalog_query",
     "extract_answer_claims",
@@ -329,6 +345,7 @@ __all__ = [
     "load_retrieval_cases",
     "load_query_runtime",
     "load_routing_cases",
+    "load_verifier_cases",
     "load_or_build_bm25_retriever",
     "parse_author_aliases",
     "plan_reasoning",

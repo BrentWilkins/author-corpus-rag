@@ -417,15 +417,21 @@ flowchart LR
     pool[Deduplicated exact-span<br/>evidence pool]
     draft[Cited draft]
     claims[Atomic citation-bound claims]
-    verify{Conservative verifier}
-    answer[Supported or qualified<br/>claims only]
+    guard{Exact span and<br/>author-voice guards}
+    verify{Selected verifier}
+    conservative[Conservative lexical<br/>baseline]
+    semantic[Structured semantic<br/>experimental]
+    answer[Supported claim or explicit<br/>narrower qualified claim]
     retry[One corrective retrieval pass]
     abstain[Grounded abstention]
     trace[(Reasoning-aware query trace)]
 
     question --> plan
     scope --> plan
-    plan --> retrieve --> pool --> draft --> claims --> verify
+    plan --> retrieve --> pool --> draft --> claims --> guard
+    guard --> verify
+    conservative --> verify
+    semantic --> verify
     verify -->|supported / qualified| answer
     verify -->|unresolved, round 1| retry --> pool
     verify -->|unresolved, round 2| abstain
@@ -435,11 +441,19 @@ flowchart LR
     verify --> trace
 ```
 
-This path is opt-in and limited to two rounds. Missing exact spans,
-contradictions, updates, attributed reports, mixed voice, and unresolved
-evidence cannot be promoted automatically. `ClaimVerifier` is replaceable so
-alternatives can be compared on private development and unseen holdout cases.
-Automatic verification remains distinct from human audit.
+This path is opt-in and limited to two rounds. Missing exact spans and
+non-document-author voice fail before semantic model judgment. The conservative
+baseline accepts only complete support; it abstains rather than inventing the
+wording for a qualification. The experimental semantic verifier returns strict
+batched JSON and may qualify only by supplying the complete narrower statement
+that will be rendered. Invalid output, duplicate or missing batch identifiers,
+and unsafe rewrites fail closed.
+
+`ClaimVerifier` remains replaceable. `verifier_evaluation.py` compares
+implementations on identical current trace claims and reports coverage,
+selective accuracy, false acceptance, and elapsed time. Private development and
+unseen query/source groups must stay separate. Automatic verification remains
+distinct from human audit.
 
 ## Level 9: evidence-bound synthesis and answer review
 
@@ -519,8 +533,10 @@ always cite retrieved source passages.
     stay outside version control.
 16. Bounded reasoning makes no more than two retrieval/generation rounds and is
     opt-in.
-17. Only claims whose current exact evidence is conservatively supported or
-    qualified enter an automatic reasoned answer.
+17. Only claims whose current exact evidence supports the complete statement,
+    or an explicit verifier-authored narrower qualification, enter an automatic
+    reasoned answer; legacy implicit qualifications remain readable but cannot
+    be rendered.
 18. Reasoning, synthesis, traces, and reviewed examples carry an explicit
     author scope; coauthored prose is never assigned to one coauthor.
 19. Evidence-bound synthesis consumes resolved ledgers, retains disagreements,
@@ -552,6 +568,7 @@ always cite retrieved source passages.
 | Explicit author scopes | `src/author_corpus/scope.py` |
 | Bounded claim-level reasoning | `src/author_corpus/reasoning.py` |
 | Generated-claim holdout evaluation | `src/author_corpus/trace_evaluation.py` |
+| Aggregate verifier holdout comparison | `src/author_corpus/verifier_evaluation.py` |
 | Evidence-bound synthesis | `src/author_corpus/synthesis.py` |
 | Whole-answer review and private export | `src/author_corpus/answer_review.py` |
 | Notebook and maintenance entry points | `notebooks/`, `src/author_corpus/cli.py` |

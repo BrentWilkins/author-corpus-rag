@@ -23,6 +23,8 @@ from author_corpus.indexing import (
 from author_corpus.ingestion import load_corpus_config
 from author_corpus.local_llm import LocalModelSettings, OpenAICompatibleCompleter
 from author_corpus.persistence import CacheLayout, corpus_fingerprint, write_manifest
+from author_corpus.reasoning import ConservativeClaimVerifier, StructuredSemanticClaimVerifier
+from author_corpus.runtime import RuntimeSettings
 from author_corpus.summaries import (
     SummaryProgress,
     SummaryStore,
@@ -32,6 +34,7 @@ from author_corpus.summaries import (
 from author_corpus.timing import TimingLog
 from author_corpus.trace_evaluation import evaluate_generated_claims, load_generated_claim_cases
 from author_corpus.tracing import QueryTraceStore
+from author_corpus.verifier_evaluation import evaluate_verifiers, load_verifier_cases
 
 
 def main() -> None:
@@ -64,6 +67,8 @@ def main() -> None:
         )
     elif arguments.command == "evaluate-generated-claims":
         _evaluate_generated_claims(cases_path=arguments.cases)
+    elif arguments.command == "evaluate-verifiers":
+        _evaluate_verifiers(cases_path=arguments.cases)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -133,6 +138,16 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Private YAML cases; defaults to AUTHOR_CORPUS_GENERATED_CLAIM_EVAL.",
+    )
+    verifiers = subparsers.add_parser(
+        "evaluate-verifiers",
+        help="Compare conservative and semantic aggregate claim verifiers on private holdouts.",
+    )
+    verifiers.add_argument(
+        "--cases",
+        type=Path,
+        default=None,
+        help="Private YAML cases; defaults to AUTHOR_CORPUS_VERIFIER_EVAL.",
     )
     return parser
 
@@ -210,6 +225,41 @@ def _evaluate_generated_claims(*, cases_path: Path | None) -> None:
         f"elapsed={evaluation.elapsed_seconds:.3f}s.",
         flush=True,
     )
+
+
+def _evaluate_verifiers(*, cases_path: Path | None) -> None:
+    project_root = Path(author_corpus.__file__).resolve().parents[2]
+    load_dotenv(project_root / ".env")
+    settings = RuntimeSettings.from_environment(os.environ, project_root=project_root)
+    resolved_cases = cases_path
+    if resolved_cases is None:
+        resolved_cases = _required_path("AUTHOR_CORPUS_VERIFIER_EVAL", relative_to=project_root)
+    elif not resolved_cases.is_absolute():
+        resolved_cases = project_root / resolved_cases
+    load_result = load_corpus_config(settings.config_path)
+    load_result.raise_for_errors()
+    complete = OpenAICompatibleCompleter(settings.model)
+    comparison = evaluate_verifiers(
+        load_verifier_cases(resolved_cases.resolve()),
+        QueryTraceStore(project_root / ".cache" / "query_traces.sqlite3"),
+        documents={document.document_id: document for document in load_result.documents},
+        verifiers={
+            "conservative": ConservativeClaimVerifier(),
+            "semantic": StructuredSemanticClaimVerifier(complete),
+        },
+    )
+    for evaluation in comparison.evaluations:
+        selective_accuracy = "n/a" if evaluation.selective_accuracy is None else f"{evaluation.selective_accuracy:.1%}"
+        false_acceptance = "n/a" if evaluation.false_acceptance_rate is None else f"{evaluation.false_acceptance_rate:.1%}"
+        print(
+            f"{evaluation.verifier_name}: cases={len(evaluation.cases)}; "
+            f"accuracy={evaluation.accuracy:.1%}; "
+            f"coverage={evaluation.coverage:.1%}; "
+            f"selective accuracy={selective_accuracy}; "
+            f"false acceptance={false_acceptance}; "
+            f"elapsed={evaluation.elapsed_seconds:.3f}s.",
+            flush=True,
+        )
 
 
 def _build_index(

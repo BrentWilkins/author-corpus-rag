@@ -19,7 +19,7 @@ from author_corpus.review import (
     ClaimReviewWorkspace,
     ResolvedClaimStatus,
 )
-from author_corpus.service import CorpusQueryService
+from author_corpus.service import CorpusQueryService, VerifierMode
 from author_corpus.tracing import QueryTraceStore
 
 _REVIEW_ACTION_CHOICES: tuple[tuple[str, str], ...] = (
@@ -45,6 +45,10 @@ _REVIEW_STATUSES: dict[str, ResolvedClaimStatus] = {
     "unsupported": "unsupported",
 }
 _CHATBOT_HEIGHT = "72vh"
+_VERIFIER_CHOICES: tuple[tuple[str, str], ...] = (
+    ("Conservative lexical baseline", "conservative"),
+    ("Structured semantic verifier (experimental)", "semantic"),
+)
 
 
 def build_chat_interface(
@@ -58,9 +62,15 @@ def build_chat_interface(
         label="Use bounded claim-level reasoning",
         info="Slower: retrieves per subquestion, verifies cited claims, and may make one corrective pass.",
     )
+    verifier = gr.Dropdown(
+        choices=_VERIFIER_CHOICES,
+        value="conservative",
+        label="Claim verifier",
+        info="The semantic alternative adds model calls and is not the default until holdout evaluation supports it.",
+    )
 
-    def respond(message: str, history: list[dict[str, object]], use_reasoning: bool) -> str:
-        return chat_response(service, message, history, reason=use_reasoning)
+    def respond(message: str, history: list[dict[str, object]], use_reasoning: bool, verifier_mode: str) -> str:
+        return chat_response(service, message, history, reason=use_reasoning, verifier=verifier_mode)
 
     return gr.ChatInterface(
         fn=respond,
@@ -74,13 +84,13 @@ def build_chat_interface(
             "Exact metadata questions use the exhaustive catalog. Content questions use source-grounded retrieval. "
             "Each answer shows its route, sources, and timing."
         ),
-        additional_inputs=[reasoning],
+        additional_inputs=[reasoning, verifier],
         additional_inputs_accordion="Reasoning options",
         examples=[
-            ["How many articles has the author written here?", False],
-            ["Who are the other authors?", False],
-            ["What themes recur across the corpus?", False],
-            ["How did the author's advice change over time?", True],
+            ["How many articles has the author written here?", False, "conservative"],
+            ["Who are the other authors?", False, "conservative"],
+            ["What themes recur across the corpus?", False, "conservative"],
+            ["How did the author's advice change over time?", True, "conservative"],
         ],
         flagging_mode="never",
         analytics_enabled=False,
@@ -95,9 +105,11 @@ def chat_response(
     history: list[dict[str, object]],
     *,
     reason: bool = False,
+    verifier: str = "conservative",
 ) -> str:
     """Convert Gradio history and execute one bounded conversational turn."""
-    turn = ask_conversational(service, message, _user_history(history), reason=reason)
+    verifier_mode = _verifier_mode(verifier)
+    turn = ask_conversational(service, message, _user_history(history), reason=reason, verifier=verifier_mode)
     return turn.to_markdown()
 
 
@@ -686,6 +698,15 @@ def _content_text(content: object) -> str | None:
         if isinstance(text, str) and text.strip():
             parts.append(text.strip())
     return "\n".join(parts) or None
+
+
+def _verifier_mode(value: str) -> VerifierMode:
+    normalized = value.strip().lower()
+    if normalized == "conservative":
+        return "conservative"
+    if normalized == "semantic":
+        return "semantic"
+    raise ValueError(f"Unknown verifier mode: {value!r}.")
 
 
 def _review_summary(review: ClaimReviewRecord) -> str:

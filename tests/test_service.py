@@ -168,11 +168,33 @@ def test_opt_in_reasoning_is_bounded_and_persisted(tmp_path: Path) -> None:
     assert len(result.reasoning.rounds) == 2
     assert result.trace_id is not None
     assert "bounded reasoning 2 round(s)" in result.to_markdown()
+    assert "verifier `conservative-lexical-v1`" in result.to_markdown()
+    assert [timing.label for timing in result.timings][-5:] == [
+        "reasoning retrieval",
+        "reasoning generation",
+        "claim verification",
+        "bounded reasoning",
+        "trace persistence",
+    ]
     assert service.trace_context is not None
     trace = service.trace_context.store.get(result.trace_id)
     assert trace is not None
     assert trace.reasoning is not None
     assert trace.author_scope.authors == ("Avery Stone",)
+
+
+def test_semantic_reasoning_verifier_is_explicitly_selected(tmp_path: Path) -> None:
+    """Expose the experimental verifier without changing the conservative default."""
+    retriever = CountingRetriever()
+    service = _service(tmp_path, retriever, with_generation=True)
+
+    result = service.ask("Compare the recommendation versus the alternative.", reason=True, verifier="semantic")
+
+    assert result.reasoning is not None
+    assert {verification.verifier_id for round_ in result.reasoning.rounds for verification in round_.verifications} == {
+        "structured-semantic-v1"
+    }
+    assert "verifier `structured-semantic-v1`" in result.to_markdown()
 
 
 def test_semantic_query_resolves_only_configured_author_alias(tmp_path: Path) -> None:

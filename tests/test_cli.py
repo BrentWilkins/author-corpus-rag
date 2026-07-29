@@ -26,3 +26,10 @@ def test_generated_claim_evaluation_uses_private_cases_by_default() -> None:
     arguments = _parser().parse_args(["evaluate-generated-claims"])
 
     assert arguments.cases is None
+
+
+def test_verifier_evaluation_uses_private_cases_by_default() -> None:
+    """Keep aggregate verifier labels and semantic model calls explicit."""
+    arguments = _parser().parse_args(["evaluate-verifiers"])
+
+    assert arguments.cases is None
