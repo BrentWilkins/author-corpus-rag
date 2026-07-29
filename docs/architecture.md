@@ -543,6 +543,9 @@ always cite retrieved source passages.
     and never treats navigation summaries as facts.
 20. Whole-answer acceptance or revision requires current exact citation spans;
     ordinary chat and rejected reviews never produce training examples.
+21. Citation repair is bounded to one retry. A second citation-format failure
+    returns a visible abstention and persists the private raw attempts and
+    timing; failed draft prose never enters claim extraction as an answer.
 
 ## Component map
 

@@ -1,5 +1,6 @@
 """Tests for single-retrieval query execution and bounded conversation context."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 from llama_index.core.base.base_retriever import BaseRetriever
@@ -61,6 +62,7 @@ def _service(
     *,
     with_generation: bool,
     author_aliases: tuple[str, ...] = (),
+    complete: Callable[[str], str] | None = None,
 ) -> CorpusQueryService:
     source = tmp_path / "work.md"
     source.write_text(
@@ -86,7 +88,7 @@ def _service(
         return CorpusQueryService(
             catalog,
             profiles,
-            complete=lambda prompt: "The source recommends a gradual approach [1].",
+            complete=complete or (lambda prompt: "The source recommends a gradual approach [1]."),
             model_id=model_settings.model_id,
             default_author="Avery Stone",
             author_aliases=author_aliases,
@@ -195,6 +197,32 @@ def test_semantic_reasoning_verifier_is_explicitly_selected(tmp_path: Path) -> N
         "structured-semantic-v1"
     }
     assert "verifier `structured-semantic-v1`" in result.to_markdown()
+
+
+def test_reasoning_citation_failure_abstains_and_persists_attempts(tmp_path: Path) -> None:
+    """Keep a slow invalid draft visible as a safe trace instead of raising."""
+    retriever = CountingRetriever()
+    service = _service(
+        tmp_path,
+        retriever,
+        with_generation=True,
+        complete=lambda prompt: "A fluent answer without evidence markers.",
+    )
+
+    result = service.ask("Compare the recommendation versus the alternative.", reason=True)
+
+    assert result.grounded_answer is not None
+    assert result.grounded_answer.status == "citation_failure"
+    assert len(result.grounded_answer.generation_attempts) == 2
+    assert result.trace_id is not None
+    assert service.trace_context is not None
+    trace = service.trace_context.store.get(result.trace_id)
+    assert trace is not None
+    assert trace.answer_status == "citation_failure"
+    assert len(trace.generation_attempts) == 2
+    assert trace.reasoning is not None
+    assert len(trace.reasoning.rounds) == 1
+    assert "Generation abstained" in result.to_markdown()
 
 
 def test_semantic_query_resolves_only_configured_author_alias(tmp_path: Path) -> None:

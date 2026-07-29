@@ -10,7 +10,7 @@ from author_corpus.answer_review import (
     export_reviewed_training_examples,
     review_trace_answer,
 )
-from author_corpus.answering import GroundedAnswer, GroundedAnswerer
+from author_corpus.answering import AnswerStatus, GenerationAttempt, GroundedAnswer, GroundedAnswerer
 from author_corpus.audit import (
     EVIDENCE_SPAN_VERSION,
     AuditedClaim,
@@ -200,6 +200,7 @@ __all__ = [
     "AnswerReviewAction",
     "AnswerReviewRecord",
     "AnswerReviewStore",
+    "AnswerStatus",
     "AuthorDocumentStats",
     "AuthorIdentity",
     "AuthorQueryResolution",
@@ -260,6 +261,7 @@ __all__ = [
     "GeneratedClaimEvaluation",
     "GeneratedClaimEvaluationCase",
     "GeneratedClaimLabelMetrics",
+    "GenerationAttempt",
     "GroundedAnswer",
     "GroundedAnswerer",
     "INDEX_PIPELINE_VERSION",

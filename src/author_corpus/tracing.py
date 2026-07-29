@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from author_corpus.answering import GroundedAnswer
+from author_corpus.answering import AnswerStatus, GenerationAttempt, GroundedAnswer
 from author_corpus.audit import EvidenceSpan, EvidenceValidationIssue, validate_evidence_spans
 from author_corpus.local_llm import LocalModelSettings, ReasoningEffort
 from author_corpus.models import CorpusDocument
@@ -147,6 +147,8 @@ class QueryTrace(BaseModel):
     user_query: str | None = None
     author_scope: AuthorScope = Field(default_factory=AuthorScope)
     answer: str
+    answer_status: AnswerStatus = "answered"
+    generation_attempts: tuple[GenerationAttempt, ...] = ()
     reasoning: ReasoningTrace | None = None
     cited_evidence_numbers: tuple[int, ...]
     evidence: tuple[TracedEvidence, ...]
@@ -158,6 +160,14 @@ class QueryTrace(BaseModel):
     @model_validator(mode="after")
     def validate_citations(self) -> Self:
         """Require citations and optional source-span references to resolve."""
+        ordinals = tuple(attempt.ordinal for attempt in self.generation_attempts)
+        if ordinals != tuple(range(1, len(self.generation_attempts) + 1)):
+            raise ValueError("Query-trace generation attempts must use contiguous one-based ordinals.")
+        if self.answer_status == "citation_failure":
+            if len(self.generation_attempts) != 2:
+                raise ValueError("A citation-failure trace requires both bounded generation attempts.")
+            if self.cited_evidence_numbers or any(attempt.valid_citation_numbers for attempt in self.generation_attempts):
+                raise ValueError("A citation-failure trace cannot contain valid citations.")
         available = {item.evidence_number for item in self.evidence}
         if len(available) != len(self.evidence):
             raise ValueError("Query trace contains duplicate evidence numbers.")
@@ -250,6 +260,8 @@ class QueryTrace(BaseModel):
             user_query=user_query,
             author_scope=author_scope or AuthorScope(),
             answer=answer.answer,
+            answer_status=answer.status,
+            generation_attempts=answer.generation_attempts,
             reasoning=reasoning,
             cited_evidence_numbers=answer.cited_evidence_numbers,
             evidence=evidence,

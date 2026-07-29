@@ -99,6 +99,8 @@ def test_query_trace_round_trip_and_freshness(tmp_path: Path) -> None:
     assert trace.retrieval.minimum_document_author_fraction == 0.8
     assert trace.retrieval.strategy == "hybrid_evidence"
     assert trace.user_query is None
+    assert trace.answer_status == "answered"
+    assert trace.generation_attempts == ()
     assert trace.author_scope.kind == "corpus"
     assert len(trace.evidence[0].passage_hash) == 64
     assert trace.evidence[0].evidence_span_id == evidence_span.span_id
@@ -146,12 +148,16 @@ def test_historical_trace_without_source_ranges_is_explicitly_unversioned(tmp_pa
 
     serialized = trace.model_dump(mode="json")
     serialized.pop("evidence_spans")
+    serialized.pop("answer_status")
+    serialized.pop("generation_attempts")
     for item in serialized["evidence"]:
         item.pop("evidence_span_id")
     restored = QueryTrace.model_validate(serialized)
     freshness = restored.check_freshness({document.document_id: document})
 
     assert restored.evidence_spans == ()
+    assert restored.answer_status == "answered"
+    assert restored.generation_attempts == ()
     assert freshness.is_current is False
     assert freshness.unversioned_document_ids == (document.document_id,)
 

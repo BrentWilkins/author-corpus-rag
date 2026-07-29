@@ -52,6 +52,8 @@ def test_answer_returns_exact_evidence_and_valid_citations() -> None:
     result = answerer.answer("What approach is recommended?", minimum_document_author_fraction=0.8)
 
     assert result.has_valid_citations
+    assert result.status == "answered"
+    assert len(result.generation_attempts) == 1
     assert result.cited_evidence_numbers == (1,)
     assert result.cited_evidence == ((1, result.evidence[0]),)
     assert result.evidence[0].document_id == "synthetic-work"
@@ -83,6 +85,9 @@ def test_answer_retries_once_when_citations_are_missing() -> None:
 
     assert result.cited_evidence_numbers == (1,)
     assert result.answer.endswith("[1].")
+    assert len(result.generation_attempts) == 2
+    assert result.generation_attempts[0].valid_citation_numbers == ()
+    assert result.generation_attempts[1].valid_citation_numbers == (1,)
 
 
 def test_answer_does_not_call_model_without_evidence() -> None:
@@ -101,6 +106,29 @@ def test_answer_does_not_call_model_without_evidence() -> None:
 
     assert result.answer == INSUFFICIENT_EVIDENCE_ANSWER
     assert result.evidence == ()
+    assert result.status == "insufficient_evidence"
+    assert result.generation_attempts == ()
+
+
+def test_answer_abstains_and_retains_attempts_when_citation_repair_fails() -> None:
+    """Return an inspectable failure instead of raising after two uncited drafts."""
+    responses = iter(["First uncited draft.", "Second uncited draft."])
+    answerer = GroundedAnswerer(
+        SemanticCorpusSearch(EvidenceRetriever()),
+        lambda prompt: next(responses),
+        model_id="synthetic-model",
+    )
+
+    result = answerer.answer("What approach is recommended?")
+
+    assert result.answer == INSUFFICIENT_EVIDENCE_ANSWER
+    assert result.status == "citation_failure"
+    assert [attempt.output for attempt in result.generation_attempts] == [
+        "First uncited draft.",
+        "Second uncited draft.",
+    ]
+    assert result.cited_evidence_numbers == ()
+    assert "without valid evidence citations" in result.to_markdown()
 
 
 def test_answer_can_reuse_an_already_inspected_search_result() -> None:

@@ -426,6 +426,8 @@ def _safe_answer(draft: GroundedAnswer, verifications: tuple[ClaimVerification, 
             cited_evidence_numbers=(),
             model_id=draft.model_id,
             prompt_version=draft.prompt_version,
+            status="citation_failure" if draft.status == "citation_failure" else "verification_abstention",
+            generation_attempts=draft.generation_attempts,
         )
     lines = tuple(
         f"{verification.answer_statement} {' '.join(f'[{number}]' for number in verification.citation_numbers)}"
@@ -439,6 +441,8 @@ def _safe_answer(draft: GroundedAnswer, verifications: tuple[ClaimVerification, 
         cited_evidence_numbers=cited,
         model_id=draft.model_id,
         prompt_version=draft.prompt_version,
+        status="answered",
+        generation_attempts=draft.generation_attempts,
     )
 
 

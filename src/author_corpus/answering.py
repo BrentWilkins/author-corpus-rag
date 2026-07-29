@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from author_corpus.audit import EvidenceSpan
 from author_corpus.retrieval import RetrievedPassage, SemanticCorpusSearch, SemanticSearchResult
@@ -13,6 +14,17 @@ from author_corpus.retrieval import RetrievedPassage, SemanticCorpusSearch, Sema
 ANSWER_PROMPT_VERSION = "grounded-answer-v1"
 INSUFFICIENT_EVIDENCE_ANSWER = "The retrieved evidence is insufficient to answer this question."
 TextCompleter = Callable[[str], str]
+AnswerStatus = Literal["answered", "insufficient_evidence", "citation_failure", "verification_abstention"]
+
+
+class GenerationAttempt(BaseModel):
+    """One private model output and the valid citations parsed from it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ordinal: int = Field(ge=1, le=2)
+    output: str
+    valid_citation_numbers: tuple[int, ...] = ()
 
 
 class GroundedAnswer(BaseModel):
@@ -26,6 +38,23 @@ class GroundedAnswer(BaseModel):
     cited_evidence_numbers: tuple[int, ...]
     model_id: str
     prompt_version: str
+    status: AnswerStatus = "answered"
+    generation_attempts: tuple[GenerationAttempt, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_generation_outcome(self) -> Self:
+        """Keep attempt order and fail-closed statuses internally consistent."""
+        ordinals = tuple(attempt.ordinal for attempt in self.generation_attempts)
+        if ordinals != tuple(range(1, len(self.generation_attempts) + 1)):
+            raise ValueError("Generation attempts must use contiguous one-based ordinals.")
+        if self.status == "citation_failure":
+            if len(self.generation_attempts) != 2:
+                raise ValueError("A citation failure requires both bounded generation attempts.")
+            if self.cited_evidence_numbers or any(attempt.valid_citation_numbers for attempt in self.generation_attempts):
+                raise ValueError("A citation failure cannot contain valid citations.")
+        if self.status == "insufficient_evidence" and self.generation_attempts:
+            raise ValueError("An evidence insufficiency cannot contain generation attempts.")
+        return self
 
     @property
     def has_valid_citations(self) -> bool:
@@ -49,10 +78,11 @@ class GroundedAnswer(BaseModel):
 
     def to_markdown(self) -> str:
         """Render the answer followed by clickable sources it actually cites."""
+        diagnostic = _status_diagnostic(self)
         if not self.cited_evidence:
-            return self.answer
+            return f"{self.answer}{diagnostic}"
         sources = "\n".join(_markdown_source(number, passage) for number, passage in self.cited_evidence)
-        return f"{self.answer}\n\n### Sources\n\n{sources}"
+        return f"{self.answer}\n\n### Sources\n\n{sources}{diagnostic}"
 
 
 class GroundedAnswerer:
@@ -115,6 +145,7 @@ class GroundedAnswerer:
                 cited_evidence_numbers=(),
                 model_id=self.model_id,
                 prompt_version=self.prompt_version,
+                status="insufficient_evidence",
             )
 
         prompt = _answer_prompt(
@@ -122,16 +153,24 @@ class GroundedAnswerer:
             evidence,
             max_passage_characters=self.max_passage_characters,
         )
-        answer = _nonempty_completion(self.complete, prompt)
+        answer = self.complete(prompt).strip()
         citations = _citation_numbers(answer, evidence_count=len(evidence))
+        attempts = [GenerationAttempt(ordinal=1, output=answer, valid_citation_numbers=citations)]
         if not citations:
-            answer = _nonempty_completion(
-                self.complete,
-                _citation_repair_prompt(prompt, answer),
-            )
+            answer = self.complete(_citation_repair_prompt(prompt, answer)).strip()
             citations = _citation_numbers(answer, evidence_count=len(evidence))
+            attempts.append(GenerationAttempt(ordinal=2, output=answer, valid_citation_numbers=citations))
         if not citations:
-            raise ValueError("The model did not produce any valid evidence citations after one retry.")
+            return GroundedAnswer(
+                query=search_result.query,
+                answer=INSUFFICIENT_EVIDENCE_ANSWER,
+                evidence=evidence,
+                cited_evidence_numbers=(),
+                model_id=self.model_id,
+                prompt_version=self.prompt_version,
+                status="citation_failure",
+                generation_attempts=tuple(attempts),
+            )
 
         return GroundedAnswer(
             query=search_result.query,
@@ -140,6 +179,8 @@ class GroundedAnswerer:
             cited_evidence_numbers=citations,
             model_id=self.model_id,
             prompt_version=self.prompt_version,
+            status="answered",
+            generation_attempts=tuple(attempts),
         )
 
 
@@ -225,15 +266,17 @@ def _citation_numbers(answer: str, *, evidence_count: int) -> tuple[int, ...]:
     return tuple(sorted(number for number in cited if 1 <= number <= evidence_count))
 
 
-def _nonempty_completion(complete: TextCompleter, prompt: str) -> str:
-    result = complete(prompt).strip()
-    if not result:
-        raise ValueError("The model returned an empty answer.")
-    return result
-
-
 def _markdown_source(number: int, passage: RetrievedPassage) -> str:
     title = passage.title.replace("[", r"\[").replace("]", r"\]")
     if passage.canonical_source_uri:
         return f"- [{number}] [{title}]({passage.canonical_source_uri})"
     return f"- [{number}] {title} — document `{passage.document_id}`"
+
+
+def _status_diagnostic(answer: GroundedAnswer) -> str:
+    if answer.status == "citation_failure":
+        attempts = len(answer.generation_attempts)
+        return f"\n\n_Generation abstained after {attempts} attempt(s) without valid evidence citations._"
+    if answer.status == "verification_abstention":
+        return "\n\n_Claim verification did not admit any generated claim._"
+    return ""

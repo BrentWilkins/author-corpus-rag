@@ -20,7 +20,7 @@ from author_corpus.review import (
     ResolvedClaimStatus,
 )
 from author_corpus.service import CorpusQueryService, VerifierMode
-from author_corpus.tracing import QueryTraceStore
+from author_corpus.tracing import QueryTrace, QueryTraceStore
 
 _REVIEW_ACTION_CHOICES: tuple[tuple[str, str], ...] = (
     ("Accept unchanged", "accept"),
@@ -292,7 +292,7 @@ def trace_claim_choices(store: QueryTraceStore, *, limit: int = 20) -> tuple[tup
     """Return recent trace labels and stable IDs for read-only inspection."""
     return tuple(
         (
-            f"{trace.created_at.isoformat()} · {_truncate(trace.user_query or trace.query, length=90)}",
+            f"{trace.created_at.isoformat()} · {trace.answer_status} · {_truncate(trace.user_query or trace.query, length=90)}",
             trace.trace_id,
         )
         for trace in store.recent(limit=limit)
@@ -368,6 +368,7 @@ def answer_review_form(
         + (f" — {_escape_inline(item.canonical_source_uri)}" if item.canonical_source_uri else "")
         for item in trace.evidence
     )
+    attempts = _generation_attempts_markdown(trace)
     preview = "\n".join(
         (
             f"### {_escape_inline(trace.user_query or trace.query)}",
@@ -375,8 +376,11 @@ def answer_review_form(
             f"**Review state:** {state}",
             f"**Exact cited-span coverage:** {covered}/{total}",
             f"**Author scope:** `{_escape_inline(trace.author_scope.cache_key)}`",
+            f"**Generation outcome:** `{trace.answer_status}`",
+            f"**Generation attempts:** {len(trace.generation_attempts)}",
             "",
             trace.answer,
+            attempts,
             "",
             "### Frozen evidence",
             "",
@@ -384,6 +388,23 @@ def answer_review_form(
         )
     )
     return preview, trace.answer
+
+
+def _generation_attempts_markdown(trace: QueryTrace) -> str:
+    if not trace.generation_attempts:
+        return ""
+    lines = ["", "### Private generation attempts", ""]
+    for attempt in trace.generation_attempts:
+        citations = ", ".join(f"[{number}]" for number in attempt.valid_citation_numbers) or "none"
+        lines.extend(
+            (
+                f"**Attempt {attempt.ordinal}; valid citations: {citations}**",
+                "",
+                _indented_text(attempt.output or "<empty model output>"),
+                "",
+            )
+        )
+    return "\n".join(lines).rstrip()
 
 
 def submit_answer_review(

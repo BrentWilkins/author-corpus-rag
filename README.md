@@ -104,6 +104,13 @@ read-only subtab inspects generated-answer traces: it lists cited candidate
 sentences, uncited prose, exact-span coverage, and per-evidence heuristic labels
 without creating proposals or changing either audit database.
 
+Citation-constrained generation is fail-closed. If both the initial draft and
+one repair omit valid evidence markers, chat returns a visible grounded
+abstention rather than an exception. The private durable trace records the
+`citation_failure` outcome, both raw attempts, retrieved evidence, and elapsed
+time. The answer-review tab shows those attempts for diagnosis; raw failed
+drafts are never parsed as claims or shown as the chat answer.
+
 The chat's collapsed **Reasoning options** panel enables bounded claim-level
 reasoning for an individual question. This slower path is off by default. Its
 verifier selector defaults to the deterministic conservative baseline; the
