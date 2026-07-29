@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Self
@@ -68,10 +70,17 @@ class ClaimReviewProposal(BaseModel):
         corpus_fingerprint: str,
         claim_id: str,
         evidence_spans: tuple[EvidenceSpan, ...],
+        proposal_id: str | None = None,
     ) -> ClaimReviewProposal:
         """Create a pending proposal without creating an audited claim."""
+        resolved_proposal_id = proposal_id or _proposal_id(
+            decision,
+            corpus_fingerprint=corpus_fingerprint,
+            claim_id=claim_id,
+            evidence_spans=evidence_spans,
+        )
         return cls(
-            proposal_id=uuid4().hex,
+            proposal_id=resolved_proposal_id,
             created_at=datetime.now(UTC),
             corpus_fingerprint=corpus_fingerprint,
             claim_id=claim_id,
@@ -268,8 +277,13 @@ class ClaimReviewStore:
             return None
         return ClaimReviewRecord.model_validate_json(str(row["record_json"]))
 
-    def recent(self, *, limit: int = 20) -> tuple[ClaimReviewRecord, ...]:
-        """Return recent reviews in reverse chronological order."""
+    def recent(
+        self,
+        *,
+        limit: int = 20,
+        corpus_fingerprint: str | None = None,
+    ) -> tuple[ClaimReviewRecord, ...]:
+        """Return recent reviews, optionally restricted to one corpus snapshot."""
         if limit < 1:
             raise ValueError("limit must be at least 1.")
         if not self.path.exists():
@@ -281,9 +295,27 @@ class ClaimReviewStore:
                 SELECT record_json
                 FROM claim_reviews
                 ORDER BY reviewed_at DESC, review_id DESC
-                LIMIT ?
+                """
+            ).fetchall()
+        reviews = tuple(ClaimReviewRecord.model_validate_json(str(row["record_json"])) for row in rows)
+        if corpus_fingerprint is not None:
+            reviews = tuple(review for review in reviews if review.proposal.corpus_fingerprint == corpus_fingerprint)
+        return reviews[:limit]
+
+    def for_proposal(self, proposal_id: str) -> tuple[ClaimReviewRecord, ...]:
+        """Return all durable reviews recorded for one proposal."""
+        if not self.path.exists():
+            return ()
+        with self._connect() as connection:
+            _create_schema(connection)
+            rows = connection.execute(
+                """
+                SELECT record_json
+                FROM claim_reviews
+                WHERE proposal_id = ?
+                ORDER BY reviewed_at DESC, review_id DESC
                 """,
-                (limit,),
+                (proposal_id,),
             ).fetchall()
         return tuple(ClaimReviewRecord.model_validate_json(str(row["record_json"])) for row in rows)
 
@@ -291,6 +323,65 @@ class ClaimReviewStore:
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
         return connection
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimReviewWorkspace:
+    """Source-bound review proposals plus their append-only local audit store."""
+
+    proposals: tuple[ClaimReviewProposal, ...]
+    store: ClaimReviewStore
+
+    def __post_init__(self) -> None:
+        """Reject ambiguous proposal and claim identifiers."""
+        proposal_ids = [proposal.proposal_id for proposal in self.proposals]
+        claim_ids = [proposal.claim_id for proposal in self.proposals]
+        if len(set(proposal_ids)) != len(proposal_ids):
+            raise ValueError("A review workspace cannot contain duplicate proposal IDs.")
+        if len(set(claim_ids)) != len(claim_ids):
+            raise ValueError("A review workspace cannot contain duplicate claim IDs.")
+        if len({proposal.corpus_fingerprint for proposal in self.proposals}) > 1:
+            raise ValueError("A review workspace cannot mix corpus fingerprints.")
+
+    @property
+    def corpus_fingerprint(self) -> str | None:
+        """Return the queue's single corpus fingerprint, if it has proposals."""
+        return self.proposals[0].corpus_fingerprint if self.proposals else None
+
+    def get(self, proposal_id: str) -> ClaimReviewProposal:
+        """Return one proposal or fail without silently selecting another."""
+        for proposal in self.proposals:
+            if proposal.proposal_id == proposal_id:
+                return proposal
+        raise ValueError(f"Unknown claim-review proposal: {proposal_id!r}.")
+
+    def reviews_for(self, proposal_id: str) -> tuple[ClaimReviewRecord, ...]:
+        """Return durable decisions for one known proposal."""
+        self.get(proposal_id)
+        return self.store.for_proposal(proposal_id)
+
+    def record(
+        self,
+        proposal_id: str,
+        *,
+        action: ClaimReviewAction,
+        reviewer: str,
+        revised_claim: AuditedClaim | None = None,
+        notes: str | None = None,
+    ) -> ClaimReviewRecord:
+        """Persist the first explicit human decision for one proposal."""
+        proposal = self.get(proposal_id)
+        if self.store.for_proposal(proposal_id):
+            raise ValueError("This proposal already has a durable human review.")
+        review = review_claim_proposal(
+            proposal,
+            action=action,
+            reviewer=reviewer,
+            revised_claim=revised_claim,
+            notes=notes,
+        )
+        self.store.put(review)
+        return review
 
 
 def _required_text(value: str, *, name: str) -> str:
@@ -305,6 +396,24 @@ def _optional_text(value: str | None) -> str | None:
         return None
     normalized = " ".join(value.strip().split())
     return normalized or None
+
+
+def _proposal_id(
+    decision: ClaimEvidenceDecision,
+    *,
+    corpus_fingerprint: str,
+    claim_id: str,
+    evidence_spans: tuple[EvidenceSpan, ...],
+) -> str:
+    payload = "\0".join(
+        (
+            corpus_fingerprint,
+            claim_id,
+            decision.model_dump_json(),
+            *(span.span_id for span in evidence_spans),
+        )
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
 def _timezone_aware(value: datetime, *, name: str) -> datetime:

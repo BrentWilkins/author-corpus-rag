@@ -13,6 +13,7 @@ from author_corpus.persistence import corpus_fingerprint
 from author_corpus.review import (
     ClaimReviewProposal,
     ClaimReviewStore,
+    ClaimReviewWorkspace,
     apply_claim_review,
     review_claim_proposal,
 )
@@ -24,6 +25,14 @@ def test_proposal_does_not_create_an_audited_claim() -> None:
 
     assert proposal.suggested_status == "supported"
     assert not hasattr(proposal, "audited_claim")
+
+
+def test_equivalent_proposals_have_stable_ids() -> None:
+    """Reconnect durable reviews to the same source-bound suggestion after restart."""
+    first, _ = _support_proposal()
+    second, _ = _support_proposal()
+
+    assert first.proposal_id == second.proposal_id
 
 
 def test_explicit_acceptance_promotes_exact_evidence_into_ledger() -> None:
@@ -195,6 +204,24 @@ def test_review_store_round_trips_complete_human_record(tmp_path: Path) -> None:
     assert store.recent() == (review,)
 
 
+def test_recent_reviews_can_be_scoped_to_one_corpus(tmp_path: Path) -> None:
+    """Keep the current UI from displaying reviews belonging to another corpus."""
+    proposal, _ = _support_proposal()
+    other_proposal = ClaimReviewProposal.from_decision(
+        proposal.classifier_decision,
+        corpus_fingerprint="other-fingerprint",
+        claim_id=proposal.claim_id,
+        evidence_spans=proposal.evidence_spans,
+    )
+    current_review = review_claim_proposal(proposal, action="accept", reviewer="Current reviewer")
+    other_review = review_claim_proposal(other_proposal, action="accept", reviewer="Other reviewer")
+    store = ClaimReviewStore(tmp_path / "reviews.sqlite3")
+    store.put(current_review)
+    store.put(other_review)
+
+    assert store.recent(corpus_fingerprint=proposal.corpus_fingerprint) == (current_review,)
+
+
 def test_review_store_refuses_to_rewrite_an_audit_record(tmp_path: Path) -> None:
     """Make review persistence append-only while retaining idempotent writes."""
     proposal, _ = _support_proposal()
@@ -205,6 +232,46 @@ def test_review_store_refuses_to_rewrite_an_audit_record(tmp_path: Path) -> None
 
     with pytest.raises(ValueError, match="immutable"):
         store.put(changed)
+
+
+def test_workspace_allows_only_one_durable_decision_per_proposal(tmp_path: Path) -> None:
+    """Prevent an accidental double-click from recording conflicting actions."""
+    proposal, _ = _support_proposal()
+    workspace = ClaimReviewWorkspace(
+        proposals=(proposal,),
+        store=ClaimReviewStore(tmp_path / "reviews.sqlite3"),
+    )
+
+    review = workspace.record(
+        proposal.proposal_id,
+        action="accept",
+        reviewer="Local reviewer",
+    )
+
+    assert workspace.reviews_for(proposal.proposal_id) == (review,)
+    with pytest.raises(ValueError, match="already has"):
+        workspace.record(
+            proposal.proposal_id,
+            action="reject",
+            reviewer="Local reviewer",
+        )
+
+
+def test_workspace_refuses_to_mix_corpus_snapshots(tmp_path: Path) -> None:
+    """Require every proposal shown together to belong to one corpus snapshot."""
+    proposal, _ = _support_proposal()
+    other_proposal = ClaimReviewProposal.from_decision(
+        proposal.classifier_decision,
+        corpus_fingerprint="other-fingerprint",
+        claim_id="other-claim",
+        evidence_spans=proposal.evidence_spans,
+    )
+
+    with pytest.raises(ValueError, match="mix corpus fingerprints"):
+        ClaimReviewWorkspace(
+            proposals=(proposal, other_proposal),
+            store=ClaimReviewStore(tmp_path / "reviews.sqlite3"),
+        )
 
 
 def test_review_timestamps_must_identify_an_absolute_time() -> None:

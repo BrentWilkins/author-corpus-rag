@@ -20,7 +20,7 @@ flowchart LR
         notebook[Jupyter analysis notebook]
         maintenance[Maintenance CLI]
         query_service[Typed query service]
-        gradio[Gradio chat UI]
+        gradio[Gradio chat +<br/>claim-review UI]
         artifacts[(Local versioned artifacts)]
     end
 
@@ -337,6 +337,7 @@ flowchart LR
     decision[Classifier decision]
     spans[Exact evidence spans]
     proposal[Pending review proposal]
+    ui[Local Gradio review tab]
     human{Identified reviewer}
     accept[Accept]
     revise[Revise]
@@ -349,7 +350,7 @@ flowchart LR
 
     decision --> proposal
     spans --> proposal
-    proposal --> human
+    proposal --> ui --> human
     human --> accept
     human --> revise
     human --> reject
@@ -428,7 +429,7 @@ always cite retrieved source passages.
 | Single-retrieval orchestration | `src/author_corpus/service.py` |
 | Bounded conversation context | `src/author_corpus/conversation.py` |
 | Private runtime loading | `src/author_corpus/runtime.py` |
-| Local conversational UI | `src/author_corpus/ui.py` |
+| Local chat and claim-review UI | `src/author_corpus/ui.py` |
 | Citation-constrained generation | `src/author_corpus/answering.py` |
 | Exact evidence spans and answer audit trail | `src/author_corpus/audit.py`, `tracing.py` |
 | Offline claim/evidence classification | `src/author_corpus/claim_classification.py` |

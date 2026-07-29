@@ -11,6 +11,11 @@ from time import perf_counter
 from pydantic import BaseModel, ConfigDict, Field
 
 from author_corpus.catalog import CorpusCatalog
+from author_corpus.claim_classification import (
+    evaluate_claim_classifier,
+    load_claim_classification_cases,
+    validate_claim_classification_sources,
+)
 from author_corpus.hybrid import build_retrieval_profiles
 from author_corpus.identity import parse_author_aliases
 from author_corpus.indexing import INDEX_PIPELINE_VERSION, load_vector_index, vector_index_exists
@@ -18,6 +23,7 @@ from author_corpus.ingestion import load_corpus_config
 from author_corpus.local_llm import LocalModelSettings, OpenAICompatibleCompleter
 from author_corpus.models import CorpusLoadResult
 from author_corpus.persistence import CacheLayout, corpus_fingerprint, write_manifest
+from author_corpus.review import ClaimReviewProposal, ClaimReviewStore, ClaimReviewWorkspace
 from author_corpus.service import CorpusQueryService, QueryTiming, QueryTraceContext
 from author_corpus.tracing import QueryTraceStore
 
@@ -31,6 +37,7 @@ class RuntimeSettings(BaseModel):
     embedding_model: str = Field(min_length=1)
     default_author: str | None = None
     author_aliases: tuple[str, ...] = ()
+    claim_evaluation_path: Path | None = None
     model: LocalModelSettings
     chunk_size: int = Field(default=1024, ge=1)
     chunk_overlap: int = Field(default=200, ge=0)
@@ -50,6 +57,11 @@ class RuntimeSettings(BaseModel):
         if not config_path.is_absolute():
             config_path = project_root / config_path
 
+        claim_evaluation_value = environment.get("AUTHOR_CORPUS_CLAIM_EVAL", "").strip()
+        claim_evaluation_path = Path(claim_evaluation_value).expanduser() if claim_evaluation_value else None
+        if claim_evaluation_path is not None and not claim_evaluation_path.is_absolute():
+            claim_evaluation_path = project_root / claim_evaluation_path
+
         model_id = environment.get("OLLAMA_MODEL", "").strip()
         if not model_id or model_id == "your-local-chat-model":
             raise ValueError("Set OLLAMA_MODEL to an installed local chat model.")
@@ -58,6 +70,7 @@ class RuntimeSettings(BaseModel):
             embedding_model=environment.get("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5").strip(),
             default_author=environment.get("AUTHOR_CORPUS_DEFAULT_AUTHOR") or None,
             author_aliases=parse_author_aliases(environment.get("AUTHOR_CORPUS_DEFAULT_AUTHOR_ALIASES")),
+            claim_evaluation_path=claim_evaluation_path.resolve() if claim_evaluation_path is not None else None,
             model=LocalModelSettings.model_validate(
                 {
                     "model_id": model_id,
@@ -76,6 +89,7 @@ class QueryRuntime:
     load_result: CorpusLoadResult
     layout: CacheLayout
     fingerprint: str
+    review_workspace: ClaimReviewWorkspace | None
     timings: tuple[QueryTiming, ...]
 
     @property
@@ -162,15 +176,54 @@ def load_query_runtime(
             generation_settings=settings.model,
         ),
     )
+    review_started = perf_counter()
+    review_workspace = _load_review_workspace(
+        settings.claim_evaluation_path,
+        load_result=load_result,
+        fingerprint=fingerprint,
+        store=ClaimReviewStore(layout.claim_review_path),
+    )
+    timings.append(_timing("claim review proposals", review_started))
     timings.append(_timing("total runtime load", total_started))
     return QueryRuntime(
         service=service,
         load_result=load_result,
         layout=layout,
         fingerprint=fingerprint,
+        review_workspace=review_workspace,
         timings=tuple(timings),
     )
 
 
 def _timing(label: str, started_at: float) -> QueryTiming:
     return QueryTiming(label=label, elapsed_seconds=perf_counter() - started_at)
+
+
+def _load_review_workspace(
+    evaluation_path: Path | None,
+    *,
+    load_result: CorpusLoadResult,
+    fingerprint: str,
+    store: ClaimReviewStore,
+) -> ClaimReviewWorkspace | None:
+    """Load configured source-bound classifier cases as stable review proposals."""
+    if evaluation_path is None:
+        return None
+    cases = load_claim_classification_cases(evaluation_path)
+    documents = {document.document_id: document for document in load_result.documents}
+    issues = validate_claim_classification_sources(cases, documents)
+    if issues:
+        details = "; ".join(f"{issue.span_id}: {issue.code}" for issue in issues)
+        raise ValueError(f"Claim-review proposals contain stale source provenance: {details}")
+    evaluation = evaluate_claim_classifier(cases)
+    proposals = tuple(
+        ClaimReviewProposal.from_decision(
+            result.decision,
+            corpus_fingerprint=fingerprint,
+            claim_id=f"review-{case.name}",
+            evidence_spans=(case.evidence_span,),
+        )
+        for case, result in zip(cases, evaluation.cases, strict=True)
+        if case.evidence_span is not None
+    )
+    return ClaimReviewWorkspace(proposals=proposals, store=store)

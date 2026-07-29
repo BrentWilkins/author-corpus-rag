@@ -120,6 +120,7 @@ def _chat(
     launch_chat_interface(
         runtime.service,
         corpus_name=runtime.corpus_name,
+        review_workspace=runtime.review_workspace,
         server_name=server_name,
         server_port=server_port,
         share=share,

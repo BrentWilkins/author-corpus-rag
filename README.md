@@ -29,9 +29,12 @@ against corrections, disagreements, quotations, changing facts, qualifications,
 unsupported claims, and explicit abstentions without mutating audited claim
 status. A typed query service now preserves the exact,
 discovery, and focused-evidence boundaries across bounded conversational turns,
-and an optional local Gradio interface uses that same service. Per-document
-summaries are treated as experimental navigation aids. Corpus-wide synthesis is
-paused until its claims can be audited against raw source spans.
+and an optional local Gradio interface uses that same service. Its separate
+claim-review tab exposes source-bound proposals and append-only accept, revise,
+and reject records without automatically changing an answer ledger.
+Per-document summaries are treated as experimental navigation aids.
+Corpus-wide synthesis is paused until its claims can be audited against raw
+source spans.
 
 ## Setup
 
@@ -80,7 +83,8 @@ Build the current versioned index outside Jupyter:
 uv run --extra local author-corpus build-index
 ```
 
-After the index exists, launch the conversational interface locally:
+After the index exists, launch the conversational and claim-review interface
+locally:
 
 ```bash
 uv run --extra local --extra ui author-corpus chat --inbrowser
@@ -89,7 +93,12 @@ uv run --extra local --extra ui author-corpus chat --inbrowser
 The server binds to `127.0.0.1` by default, disables analytics and saved UI
 history, and does not request a public share link. Chat history is maintained by
 the browser session; the retrieval context layer uses at most the previous user
-question and never feeds a generated assistant answer back as evidence.
+question and never feeds a generated assistant answer back as evidence. When
+`AUTHOR_CORPUS_CLAIM_EVAL` points to provenance-bearing local cases, a separate
+review tab shows their exact passages and stable proposals. Every durable action
+requires a reviewer name. Accept preserves the proposal, revise exposes the
+resolved statement, status, attribution, and qualifiers, and reject creates no
+audited claim. Repeated actions on the same proposal are refused.
 
 The command separately times corpus loading, structure/voice-aware chunking,
 embedding-model loading, embedding/index construction, persistence, and the
@@ -155,9 +164,9 @@ Semantic retrieval deliberately reports `exhaustive=False` and returns its
 passage text and source URIs so retrieval can be inspected before an LLM writes
 an answer. Grounded answers retain the exact evidence supplied to the model and
 render only the sources the answer cites as clickable links. Each generated
-answer is also saved to the ignored
-`.cache/<corpus-fingerprint>/query_traces.sqlite3` database with its retrieved
-passage text, exact character ranges in normalized `CorpusDocument.content`,
+answer is also saved to the ignored `.cache/query_traces.sqlite3` database with
+its retrieved passage text, exact character ranges in normalized
+`CorpusDocument.content`,
 passage and document hashes, model and prompt settings, corpus fingerprint,
 citations, retrieval strategy, score semantics, component ranks and scores,
 and elapsed generation time. Citation markers resolve to versioned
@@ -165,6 +174,11 @@ and elapsed generation time. Citation markers resolve to versioned
 created before span-aware indexing still load, but are explicitly reported as
 unversioned; current traces can be validated against the exact normalized
 source range as well as the document hash.
+
+Human accept, revise, and reject records are stored separately in the ignored
+`.cache/claim_reviews.sqlite3` audit database. Both databases retain corpus
+fingerprints inside their records while remaining available across index
+rebuilds.
 
 Dense cosine similarity, BM25 relevance, and reciprocal-rank-fusion values are
 different score types. They must not be compared as if they shared a confidence
@@ -284,8 +298,9 @@ Only the conservative `supports`, `contradicts`, and `insufficient` mappings can
 be accepted unchanged. `qualifies` requires a reviewer-authored qualifier;
 `updates`, `attributed_report`, and `uncertain` also require a revised claim
 because they do not determine a safe final status by themselves. Automatic
-answer-claim extraction and an interactive review UI remain future work;
-classifier output is still a heuristic rather than proof.
+answer-claim extraction remains future work; the local review UI currently
+surfaces configured provenance-bearing evaluation cases. Classifier output is
+still a heuristic rather than proof.
 
 ## Privacy boundary
 
