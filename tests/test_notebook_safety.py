@@ -20,3 +20,12 @@ def test_notebook_cannot_resume_broad_synthesis() -> None:
     assert "build_cached_knowledge" not in notebook_text
     assert "knowledge.synthesis" not in notebook_text
     assert "--include-experimental-synthesis" in notebook_text
+
+
+def test_notebook_uses_separate_discovery_and_grounded_evidence_profiles() -> None:
+    """Keep broad browsing diverse while grounded answers gather deeper evidence."""
+    notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
+
+    assert "discovery_search = retrieval_profiles.discovery" in notebook_text
+    assert "evidence_search = retrieval_profiles.hybrid_evidence" in notebook_text
+    assert "evidence_limit=6" in notebook_text

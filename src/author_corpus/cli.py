@@ -10,9 +10,11 @@ from time import perf_counter
 from dotenv import load_dotenv
 
 import author_corpus
+from author_corpus.hybrid import load_or_build_bm25_retriever
 from author_corpus.indexing import (
     INDEX_PIPELINE_VERSION,
     build_vector_index_from_nodes,
+    load_vector_index,
     persist_vector_index,
     split_documents,
     vector_index_exists,
@@ -114,32 +116,37 @@ def _build_index(
     }
     fingerprint = corpus_fingerprint(documents, options=index_options)
     layout = CacheLayout(project_root / ".cache", fingerprint)
-    if vector_index_exists(layout):
-        print(f"Vector index already exists: {layout.vector_index_dir}", flush=True)
-        print(timings.finish("Total index command", total_started), flush=True)
-        return
-
-    chunk_started = timings.start()
-    nodes = split_documents(
-        documents,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
-    print(f"{timings.finish('Structure and voice-aware chunking', chunk_started)} ({len(nodes)} chunks)", flush=True)
-
     model_started = timings.start()
     embed_model = HuggingFaceEmbedding(model_name=resolved_embedding_model, device="cpu")
     print(timings.finish("Load embedding model", model_started), flush=True)
 
-    index_started = timings.start()
-    index = build_vector_index_from_nodes(nodes, embed_model=embed_model)
-    print(timings.finish("Embed chunks and build index", index_started), flush=True)
+    if vector_index_exists(layout):
+        vector_started = timings.start()
+        index = load_vector_index(layout, embed_model=embed_model)
+        print(timings.finish("Load vector index", vector_started), flush=True)
+    else:
+        chunk_started = timings.start()
+        nodes = split_documents(
+            documents,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        print(f"{timings.finish('Structure and voice-aware chunking', chunk_started)} ({len(nodes)} chunks)", flush=True)
 
-    persist_started = timings.start()
-    persist_vector_index(index, layout)
-    write_manifest(layout, documents, options=index_options)
-    print(timings.finish("Persist vector index", persist_started), flush=True)
-    print(f"Vector index ready: {layout.vector_index_dir}", flush=True)
+        index_started = timings.start()
+        index = build_vector_index_from_nodes(nodes, embed_model=embed_model)
+        print(timings.finish("Embed chunks and build index", index_started), flush=True)
+
+        persist_started = timings.start()
+        persist_vector_index(index, layout)
+        write_manifest(layout, documents, options=index_options)
+        print(timings.finish("Persist vector index", persist_started), flush=True)
+        print(f"Vector index ready: {layout.vector_index_dir}", flush=True)
+
+    lexical_started = timings.start()
+    _, lexical_loaded_from_cache = load_or_build_bm25_retriever(index, layout, similarity_top_k=30)
+    lexical_action = "loaded" if lexical_loaded_from_cache else "built and persisted"
+    print(f"{timings.finish('Load or build BM25 index', lexical_started)} ({lexical_action})", flush=True)
     print(timings.finish("Total index command", total_started), flush=True)
 
 

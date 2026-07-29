@@ -1,8 +1,11 @@
-"""Small, reproducible evaluation sets for semantic retrieval."""
+"""Small, reproducible evaluation sets for passage retrieval."""
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from pathlib import Path
+from time import perf_counter
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -53,8 +56,10 @@ class RetrievalCaseResult(BaseModel):
     retrieved_document_ids: tuple[str, ...]
     relevant_document_ids: tuple[str, ...]
     first_relevant_rank: int | None
+    normalized_discounted_cumulative_gain: float = Field(ge=0.0, le=1.0)
     has_passage_expectations: bool = False
     first_relevant_passage_rank: int | None = None
+    passage_normalized_discounted_cumulative_gain: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @property
     def hit(self) -> bool:
@@ -96,6 +101,11 @@ class RetrievalEvaluation(BaseModel):
         return 0.0 if not self.cases else sum(case.reciprocal_rank for case in self.cases) / len(self.cases)
 
     @property
+    def mean_normalized_discounted_cumulative_gain(self) -> float:
+        """Return mean document-level nDCG across all cases."""
+        return 0.0 if not self.cases else sum(case.normalized_discounted_cumulative_gain for case in self.cases) / len(self.cases)
+
+    @property
     def passage_case_count(self) -> int:
         """Return the number of cases with passage-level expectations."""
         return sum(case.has_passage_expectations for case in self.cases)
@@ -113,6 +123,34 @@ class RetrievalEvaluation(BaseModel):
         if not passage_cases:
             return None
         return sum(case.passage_reciprocal_rank for case in passage_cases) / len(passage_cases)
+
+    @property
+    def passage_mean_normalized_discounted_cumulative_gain(self) -> float | None:
+        """Return mean passage-level nDCG, or None when no passages were labeled."""
+        values = tuple(
+            case.passage_normalized_discounted_cumulative_gain
+            for case in self.cases
+            if case.passage_normalized_discounted_cumulative_gain is not None
+        )
+        return None if not values else sum(values) / len(values)
+
+
+class RetrievalStrategyEvaluation(BaseModel):
+    """One named strategy's metrics and measured evaluation latency."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    strategy: str = Field(min_length=1)
+    elapsed_seconds: float = Field(ge=0.0)
+    evaluation: RetrievalEvaluation
+
+
+class RetrievalBenchmark(BaseModel):
+    """Comparable evaluations for multiple retrieval strategies."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    strategies: tuple[RetrievalStrategyEvaluation, ...] = Field(min_length=1)
 
 
 class _RetrievalCaseFile(BaseModel):
@@ -160,6 +198,8 @@ def evaluate_retrieval(
             ),
             None,
         )
+        document_relevance = _unique_document_relevance(retrieved_ids, relevant_ids)
+        passage_relevance = _unique_passage_relevance(search_result.passages, case.relevant_passages)
         results.append(
             RetrievalCaseResult(
                 name=case.name,
@@ -167,11 +207,43 @@ def evaluate_retrieval(
                 retrieved_document_ids=retrieved_ids,
                 relevant_document_ids=case.relevant_document_ids,
                 first_relevant_rank=first_relevant_rank,
+                normalized_discounted_cumulative_gain=_binary_ndcg(
+                    document_relevance,
+                    relevant_count=len(relevant_ids),
+                ),
                 has_passage_expectations=bool(case.relevant_passages),
                 first_relevant_passage_rank=first_relevant_passage_rank,
+                passage_normalized_discounted_cumulative_gain=(
+                    _binary_ndcg(passage_relevance, relevant_count=len(case.relevant_passages))
+                    if case.relevant_passages
+                    else None
+                ),
             )
         )
     return RetrievalEvaluation(top_k=top_k, cases=tuple(results))
+
+
+def evaluate_retrieval_strategies(
+    searches: Mapping[str, SemanticCorpusSearch],
+    cases: tuple[RetrievalCase, ...],
+    *,
+    top_k: int = 5,
+) -> RetrievalBenchmark:
+    """Time and evaluate multiple retrieval strategies on identical cases."""
+    if not searches:
+        raise ValueError("At least one retrieval strategy is required.")
+    strategy_results: list[RetrievalStrategyEvaluation] = []
+    for strategy, search in searches.items():
+        started = perf_counter()
+        evaluation = evaluate_retrieval(search, cases, top_k=top_k)
+        strategy_results.append(
+            RetrievalStrategyEvaluation(
+                strategy=strategy,
+                elapsed_seconds=perf_counter() - started,
+                evaluation=evaluation,
+            )
+        )
+    return RetrievalBenchmark(strategies=tuple(strategy_results))
 
 
 def _passage_matches(passage: RetrievedPassage, expected: RelevantPassage) -> bool:
@@ -190,3 +262,40 @@ def _passage_matches(passage: RetrievedPassage, expected: RelevantPassage) -> bo
         expected.minimum_quoted_speech_fraction is not None
         and (passage.quoted_speech_fraction is None or passage.quoted_speech_fraction < expected.minimum_quoted_speech_fraction)
     )
+
+
+def _binary_ndcg(relevance: tuple[bool, ...], *, relevant_count: int) -> float:
+    if relevant_count < 1:
+        return 0.0
+    discounted_gain = sum(1.0 / math.log2(rank + 1) for rank, is_relevant in enumerate(relevance, start=1) if is_relevant)
+    ideal_count = min(relevant_count, len(relevance))
+    ideal_gain = sum(1.0 / math.log2(rank + 1) for rank in range(1, ideal_count + 1))
+    return 0.0 if ideal_gain == 0.0 else discounted_gain / ideal_gain
+
+
+def _unique_document_relevance(retrieved_ids: tuple[str, ...], relevant_ids: set[str]) -> tuple[bool, ...]:
+    matched: set[str] = set()
+    relevance: list[bool] = []
+    for document_id in retrieved_ids:
+        is_new_match = document_id in relevant_ids and document_id not in matched
+        relevance.append(is_new_match)
+        if is_new_match:
+            matched.add(document_id)
+    return tuple(relevance)
+
+
+def _unique_passage_relevance(
+    passages: tuple[RetrievedPassage, ...],
+    expected_passages: tuple[RelevantPassage, ...],
+) -> tuple[bool, ...]:
+    unmatched = set(range(len(expected_passages)))
+    relevance: list[bool] = []
+    for passage in passages:
+        matched_index = next(
+            (index for index in sorted(unmatched) if _passage_matches(passage, expected_passages[index])),
+            None,
+        )
+        relevance.append(matched_index is not None)
+        if matched_index is not None:
+            unmatched.remove(matched_index)
+    return tuple(relevance)

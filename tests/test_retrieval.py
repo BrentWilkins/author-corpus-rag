@@ -1,5 +1,6 @@
 """Tests for inspectable semantic corpus retrieval."""
 
+import pytest
 from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
 
@@ -44,6 +45,8 @@ def test_search_returns_diverse_passages_with_provenance() -> None:
     result = search.search("synthetic topic")
 
     assert result.exhaustive is False
+    assert result.strategy == "dense"
+    assert result.score_kind == "cosine_similarity"
     assert result.inspected_candidates == 3
     assert [passage.document_id for passage in result.passages] == ["work-one", "work-two"]
     assert [passage.rank for passage in result.passages] == [1, 2]
@@ -51,6 +54,9 @@ def test_search_returns_diverse_passages_with_provenance() -> None:
     assert result.passages[0].source_uris == ("https://example.test/first",)
     assert result.passages[0].canonical_source_uri == "https://example.test/first"
     assert result.passages[0].text == "The most relevant synthetic passage."
+    assert result.passages[0].score_kind == "cosine_similarity"
+    assert result.passages[0].retrieval_contributions[0].method == "dense"
+    assert result.passages[0].retrieval_contributions[0].rank == 1
 
 
 def test_search_can_return_multiple_passages_per_document() -> None:
@@ -81,6 +87,29 @@ def test_search_can_require_predominantly_document_author_voice() -> None:
         "A passage from another synthetic work.",
     ]
     assert result.discarded_by_voice_filter == 1
+
+
+def test_search_rejects_corrupt_internal_contribution_metadata() -> None:
+    """Fail closed instead of presenting fabricated component provenance."""
+    candidate = _candidate(
+        document_id="work-one",
+        title="First Work",
+        text="Evidence.",
+        score=0.9,
+        document_author_fraction=1.0,
+    )
+    candidate.node.metadata["_retrieval_contributions"] = "not-json"
+
+    class CorruptRetriever(BaseRetriever):
+        """Return one candidate with invalid internal retrieval metadata."""
+
+        def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+            """Return the corrupt candidate."""
+            assert query_bundle.query_str
+            return [candidate]
+
+    with pytest.raises(ValueError, match="Invalid internal retrieval-contribution metadata"):
+        SemanticCorpusSearch(CorruptRetriever()).search("question")
 
 
 def _candidate(

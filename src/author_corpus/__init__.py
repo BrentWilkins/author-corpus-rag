@@ -11,11 +11,22 @@ from author_corpus.audit import (
 from author_corpus.catalog import AuthorDocumentStats, CorpusCatalog
 from author_corpus.evaluation import (
     RelevantPassage,
+    RetrievalBenchmark,
     RetrievalCase,
     RetrievalCaseResult,
     RetrievalEvaluation,
+    RetrievalStrategyEvaluation,
     evaluate_retrieval,
+    evaluate_retrieval_strategies,
     load_retrieval_cases,
+)
+from author_corpus.hybrid import (
+    ReciprocalRankFusionRetriever,
+    RetrievalProfiles,
+    RetrieverArm,
+    bm25_index_exists,
+    build_retrieval_profiles,
+    load_or_build_bm25_retriever,
 )
 from author_corpus.indexing import INDEX_PIPELINE_VERSION
 from author_corpus.ingestion import load_corpus, load_corpus_config
@@ -28,6 +39,7 @@ from author_corpus.models import (
 from author_corpus.persistence import CacheLayout, corpus_fingerprint
 from author_corpus.querying import build_catalog_tools
 from author_corpus.retrieval import (
+    RetrievalContribution,
     RetrievedPassage,
     SemanticCorpusSearch,
     SemanticSearchResult,
@@ -81,12 +93,18 @@ __all__ = [
     "QueryTraceStore",
     "RelevantPassage",
     "RetrievedPassage",
+    "RetrievalBenchmark",
     "RetrievalCase",
     "RetrievalCaseResult",
     "RetrievalEvaluation",
+    "RetrievalProfiles",
+    "RetrievalContribution",
+    "RetrievalStrategyEvaluation",
     "RetrievalTraceSettings",
     "SemanticCorpusSearch",
     "SemanticSearchResult",
+    "ReciprocalRankFusionRetriever",
+    "RetrieverArm",
     "SourceReference",
     "SummaryProgress",
     "SummaryStore",
@@ -100,9 +118,13 @@ __all__ = [
     "build_cached_document_summaries",
     "build_cached_knowledge",
     "build_catalog_tools",
+    "build_retrieval_profiles",
     "corpus_fingerprint",
     "evaluate_retrieval",
+    "evaluate_retrieval_strategies",
+    "bm25_index_exists",
     "load_corpus",
     "load_corpus_config",
     "load_retrieval_cases",
+    "load_or_build_bm25_retriever",
 ]

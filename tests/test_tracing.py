@@ -6,7 +6,7 @@ from author_corpus.answering import GroundedAnswer
 from author_corpus.ingestion import load_corpus
 from author_corpus.local_llm import LocalModelSettings
 from author_corpus.persistence import corpus_fingerprint
-from author_corpus.retrieval import RetrievedPassage
+from author_corpus.retrieval import RetrievalContribution, RetrievedPassage
 from author_corpus.tracing import (
     GenerationTraceSettings,
     QueryTrace,
@@ -27,6 +27,16 @@ def test_query_trace_round_trip_and_freshness(tmp_path: Path) -> None:
             RetrievedPassage(
                 rank=1,
                 score=0.91,
+                score_kind="reciprocal_rank_fusion",
+                retrieval_contributions=(
+                    RetrievalContribution(
+                        method="dense",
+                        rank=2,
+                        score=0.91,
+                        score_kind="cosine_similarity",
+                        rrf_contribution=0.016,
+                    ),
+                ),
                 document_id=document.document_id,
                 title=document.title,
                 document_type=document.document_type,
@@ -57,6 +67,8 @@ def test_query_trace_round_trip_and_freshness(tmp_path: Path) -> None:
             evidence_limit=5,
             max_passages_per_document=1,
             minimum_document_author_fraction=0.8,
+            strategy="hybrid_evidence",
+            score_kind="reciprocal_rank_fusion",
         ),
         generation=GenerationTraceSettings.from_local_settings(
             local_settings,
@@ -75,7 +87,10 @@ def test_query_trace_round_trip_and_freshness(tmp_path: Path) -> None:
     assert trace.evidence[0].section_path == ("Guide", "Closures")
     assert trace.evidence[0].passage_voice == "document_author"
     assert trace.evidence[0].uncertain_voice_fraction == 0.0
+    assert trace.evidence[0].score_kind == "reciprocal_rank_fusion"
+    assert trace.evidence[0].retrieval_contributions[0].method == "dense"
     assert trace.retrieval.minimum_document_author_fraction == 0.8
+    assert trace.retrieval.strategy == "hybrid_evidence"
     assert len(trace.evidence[0].passage_hash) == 64
     assert trace.check_freshness({document.document_id: document}).is_current is True
 

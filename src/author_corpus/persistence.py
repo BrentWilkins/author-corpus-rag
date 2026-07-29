@@ -37,6 +37,11 @@ class CacheLayout:
         return self.directory / "vector_index"
 
     @property
+    def bm25_index_dir(self) -> Path:
+        """Return the persisted BM25 passage-index directory."""
+        return self.directory / "bm25_index"
+
+    @property
     def summary_path(self) -> Path:
         """Return the cross-fingerprint generated knowledge-store path."""
         return self.root / "knowledge.sqlite3"

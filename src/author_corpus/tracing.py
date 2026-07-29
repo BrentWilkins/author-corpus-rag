@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from author_corpus.answering import GroundedAnswer
 from author_corpus.local_llm import LocalModelSettings, ReasoningEffort
 from author_corpus.models import CorpusDocument
-from author_corpus.retrieval import RetrievedPassage
+from author_corpus.retrieval import RetrievalContribution, RetrievedPassage, ScoreKind
 
 
 class RetrievalTraceSettings(BaseModel):
@@ -26,6 +26,8 @@ class RetrievalTraceSettings(BaseModel):
     evidence_limit: int = Field(ge=1)
     max_passages_per_document: int = Field(ge=1)
     minimum_document_author_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    strategy: str = "dense"
+    score_kind: ScoreKind = "unknown"
 
 
 class GenerationTraceSettings(BaseModel):
@@ -64,6 +66,8 @@ class TracedEvidence(BaseModel):
     evidence_number: int = Field(ge=1)
     rank: int = Field(ge=1)
     score: float | None = None
+    score_kind: ScoreKind = "unknown"
+    retrieval_contributions: tuple[RetrievalContribution, ...] = ()
     document_id: str
     document_content_hash: str | None = None
     title: str
@@ -91,6 +95,8 @@ class TracedEvidence(BaseModel):
             evidence_number=evidence_number,
             rank=passage.rank,
             score=passage.score,
+            score_kind=passage.score_kind,
+            retrieval_contributions=passage.retrieval_contributions,
             document_id=passage.document_id,
             document_content_hash=document_content_hash,
             title=passage.title,

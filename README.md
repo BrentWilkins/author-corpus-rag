@@ -16,13 +16,13 @@ committed code:
 ## Project status
 
 The current milestones provide normalized Markdown, text, and PDF ingestion,
-validation, an exact SQLite catalog, persistent vector retrieval, inspectable
-source-aware search results, citation-constrained grounded answers, repeatable
-document- and passage-level retrieval evaluation, structure-aware Markdown
-chunks, conservative quotation provenance, durable query traces, and initial
-exact-span evidence-ledger models. Per-document summaries are treated as
-experimental navigation aids. Corpus-wide synthesis is paused until its claims
-can be audited against raw source spans.
+validation, an exact SQLite catalog, persistent dense and BM25 retrieval,
+inspectable reciprocal-rank fusion, citation-constrained grounded answers,
+repeatable document- and passage-level retrieval evaluation, structure-aware
+Markdown chunks, conservative quotation provenance, durable query traces, and
+initial exact-span evidence-ledger models. Per-document summaries are treated
+as experimental navigation aids. Corpus-wide synthesis is paused until its
+claims can be audited against raw source spans.
 
 ## Setup
 
@@ -76,6 +76,13 @@ complete operation. A changed corpus, embedding model, chunk setting, or
 index-pipeline version produces a new cache fingerprint instead of overwriting a
 previous index.
 
+The notebook builds or reloads a small BM25 index over the exact persisted
+vector-index nodes. Broad discovery uses dense retrieval and retains one passage
+per document. Focused evidence gathering uses a 30-passage dense/BM25 candidate
+pool, reciprocal-rank fusion, up to three passages per document, and six final
+passages. These are explicit profiles rather than interchangeable score
+thresholds.
+
 Run the notebook smoke test headlessly without persisting its private outputs:
 
 ```bash
@@ -88,16 +95,22 @@ interactive notebook is normally configured to allow them.
 ## Query boundaries
 
 Use the SQLite catalog for exact counts, complete lists, authorship, and source
-inventory. Use semantic retrieval for subject-matter questions where topically
-similar passages are useful. Semantic search deliberately reports
+inventory. Use dense discovery for broad subject exploration and hybrid focused
+evidence for answer generation. Retrieval deliberately reports
 `exhaustive=False` and returns its passage text and source URIs so retrieval can
 be inspected before an LLM writes an answer. Grounded answers retain the exact
 evidence supplied to the model and render only the sources the answer cites as
 clickable links. Each generated answer is also saved to the ignored
 `.cache/query_traces.sqlite3` database with its retrieved passage text, passage
 hashes, document content hashes, model and prompt settings, corpus fingerprint,
-citations, and elapsed generation time. A historical trace can therefore be
-marked stale when its source documents change.
+citations, retrieval strategy, score semantics, component ranks and scores, and
+elapsed generation time. A historical trace can therefore be marked stale when
+its source documents change.
+
+Dense cosine similarity, BM25 relevance, and reciprocal-rank-fusion values are
+different score types. They must not be compared as if they shared a confidence
+scale. Fusion combines ranks rather than adding incomparable raw scores, and
+each result preserves the contributing dense and lexical ranks for inspection.
 
 Keep corpus-specific retrieval cases in the ignored `retrieval-eval.local.yaml`.
 Each case maps a natural-language query to one or more known relevant logical
@@ -105,7 +118,10 @@ document IDs. A case can additionally identify required passage text, heading
 path, and minimum document-author or quoted-speech proportion. Document hit rate
 and mean reciprocal rank remain useful discovery metrics; passage hit rate
 detects the more important failure where the right article returns the wrong
-evidence.
+evidence. The notebook compares dense, lexical, and hybrid strategies on the
+same cases and reports hit rate, mean reciprocal rank, nDCG, and elapsed time at
+both document and passage levels. New rerankers or models should become defaults
+only after improving this local benchmark.
 
 ## Structure and voice provenance
 
@@ -136,6 +152,8 @@ materially affect RAG quality, while preserving raw evidence for attribution:
 - [Late Chunking](https://arxiv.org/abs/2409.04701)
 - [Document Segmentation Matters for Retrieval-Augmented Generation](https://aclanthology.org/2025.findings-acl.422/)
 - [ARES](https://aclanthology.org/2024.naacl-long.20/)
+- [Reciprocal Rank Fusion](https://dl.acm.org/doi/10.1145/1571941.1572114)
+- [BM25S](https://arxiv.org/abs/2407.03618)
 
 ## Cached navigation summaries
 
