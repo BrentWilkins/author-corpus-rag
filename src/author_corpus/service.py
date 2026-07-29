@@ -57,6 +57,7 @@ class CorpusQueryResult(BaseModel):
     query: str = Field(min_length=1)
     retrieval_query: str = Field(min_length=1)
     decision: QueryRouteDecision
+    author_scope: AuthorScope = Field(default_factory=AuthorScope)
     author_resolution: AuthorQueryResolution | None = None
     exact: ExactCatalogResult | None = None
     semantic: SemanticSearchResult | None = None
@@ -87,10 +88,14 @@ class CorpusQueryResult(BaseModel):
             and self.grounded_answer.evidence != self.semantic.passages
         ):
             raise ValueError("A grounded answer must use the exact passages already returned by retrieval.")
+        if self.semantic is not None and self.semantic.author_scope != self.author_scope:
+            raise ValueError("A semantic result must use the query result's author scope.")
         if self.trace_id is not None and self.grounded_answer is None:
             raise ValueError("Only a grounded answer can have a durable query trace.")
         if self.reasoning is not None and self.grounded_answer is None:
             raise ValueError("Reasoning metadata requires a grounded answer.")
+        if self.reasoning is not None and self.reasoning.plan.author_scope != self.author_scope:
+            raise ValueError("Reasoning metadata must use the query result's author scope.")
         return self
 
     def to_markdown(self) -> str:
@@ -121,10 +126,11 @@ class CorpusQueryResult(BaseModel):
             reasoning_text = f" · bounded reasoning {len(self.reasoning.rounds)} round(s) · verifier `{verifier_text}`"
         identity_text = ""
         if self.author_resolution is not None and self.author_resolution.changed:
-            identity_text = "\n\n_Retrieval resolved configured author references to the corpus-author identity._"
+            identity_text = "\n\n_Retrieval resolved exact catalog author references and applied the displayed hard scope._"
+        scope_text = f" · author scope `{self.author_scope.cache_key}`"
         return (
             f"{body}{identity_text}\n\n---\n"
-            f"Route: `{self.decision.route.value}` · {timing_text}{span_text}{reasoning_text}{trace_text}"
+            f"Route: `{self.decision.route.value}`{scope_text} · {timing_text}{span_text}{reasoning_text}{trace_text}"
         )
 
 
@@ -152,19 +158,18 @@ class CorpusQueryService:
         self.retrieval_profiles = retrieval_profiles
         self.complete = complete
         self.model_id = model_id
-        self.default_author = default_author
-        self.default_scope = (
-            AuthorScope.for_author(default_author) if default_author is not None and default_author.strip() else AuthorScope()
-        )
+        self.available_authors = tuple(name for name, _count in catalog.author_counts())
         self.author_identity = (
             AuthorIdentity.from_catalog(
                 default_author=default_author,
                 aliases=author_aliases,
-                catalog_authors=(name for name, _ in catalog.author_counts()),
+                catalog_authors=self.available_authors,
             )
             if default_author is not None and default_author.strip()
             else None
         )
+        self.default_author = self.author_identity.canonical_name if self.author_identity is not None else None
+        self.default_scope = AuthorScope.for_author(self.default_author) if self.default_author is not None else AuthorScope()
         self.minimum_document_author_fraction = minimum_document_author_fraction
         self.trace_context = trace_context
 
@@ -176,6 +181,7 @@ class CorpusQueryService:
         generate: bool = True,
         reason: bool = False,
         verifier: VerifierMode = "conservative",
+        author_scope: AuthorScope | None = None,
     ) -> CorpusQueryResult:
         """Execute one question without allowing context to alter exact routing."""
         normalized_query = query.strip()
@@ -188,13 +194,25 @@ class CorpusQueryService:
         decision = route_query(normalized_query)
         timings = [QueryTiming(label="routing", elapsed_seconds=perf_counter() - route_started)]
         if decision.route is QueryRoute.EXACT_CATALOG:
+            scope_started = perf_counter()
+            exact_resolution = resolve_author_query(
+                normalized_query,
+                self.author_identity,
+                catalog_authors=self.available_authors,
+                requested_scope=author_scope,
+            )
+            timings.append(QueryTiming(label="author identity", elapsed_seconds=perf_counter() - scope_started))
             exact_started = perf_counter()
-            exact = execute_catalog_query(self.catalog, decision, default_author=self.default_author)
+            exact_default_author = (
+                exact_resolution.author_scope.authors[0] if len(exact_resolution.author_scope.authors) == 1 else None
+            )
+            exact = execute_catalog_query(self.catalog, decision, default_author=exact_default_author)
             timings.append(QueryTiming(label="exact catalog", elapsed_seconds=perf_counter() - exact_started))
             return CorpusQueryResult(
                 query=normalized_query,
                 retrieval_query=normalized_query,
                 decision=decision,
+                author_scope=exact_resolution.author_scope,
                 exact=exact,
                 timings=tuple(timings),
             )
@@ -203,7 +221,13 @@ class CorpusQueryService:
         if not contextualized_query:
             raise ValueError("Retrieval query must not be empty.")
         identity_started = perf_counter()
-        author_resolution = resolve_author_query(contextualized_query, self.author_identity)
+        author_resolution = resolve_author_query(
+            contextualized_query,
+            self.author_identity,
+            catalog_authors=self.available_authors,
+            requested_scope=author_scope,
+        )
+        effective_scope = author_resolution.author_scope
         effective_query = author_resolution.retrieval_query
         timings.append(QueryTiming(label="author identity", elapsed_seconds=perf_counter() - identity_started))
         search = self._search_for(decision.route)
@@ -221,7 +245,7 @@ class CorpusQueryService:
             ).answer(
                 author_resolution.grounding_question,
                 retrieval_question=effective_query,
-                author_scope=self.default_scope,
+                author_scope=effective_scope,
                 minimum_document_author_fraction=self.minimum_document_author_fraction,
             )
             semantic = reasoned.search_result
@@ -250,6 +274,7 @@ class CorpusQueryService:
             semantic = search.search(
                 effective_query,
                 minimum_document_author_fraction=self.minimum_document_author_fraction,
+                author_scope=effective_scope,
             )
             timings.append(QueryTiming(label="retrieval", elapsed_seconds=perf_counter() - retrieval_started))
 
@@ -283,7 +308,7 @@ class CorpusQueryService:
                 ),
                 elapsed_seconds=answer_elapsed_seconds,
                 user_query=normalized_query,
-                author_scope=self.default_scope,
+                author_scope=effective_scope,
                 reasoning=reasoning,
             )
             self.trace_context.store.put(trace)
@@ -294,6 +319,7 @@ class CorpusQueryService:
             query=normalized_query,
             retrieval_query=effective_query,
             decision=decision,
+            author_scope=effective_scope,
             author_resolution=author_resolution,
             semantic=semantic,
             grounded_answer=answer,

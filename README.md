@@ -15,6 +15,9 @@ committed code:
 
 See [the architecture guide](docs/architecture.md) for system-context,
 ingestion, routed-query, conversation-sequence, and provenance diagrams.
+The [public demo design](docs/public-demo.md) describes a privacy-safe
+multi-author corpus, GitHub Actions, and the boundary between a static Pages
+evidence explorer and the full Python RAG runtime.
 
 ## Project status
 
@@ -30,12 +33,16 @@ claim, but remains opt-in pending private holdout results. Neither verifier is
 proof.
 
 Explicit author scopes now flow through traces, reasoning, synthesis, and
-reviewed training examples while the existing single configured focal author
-remains the runtime default. Full multi-author filtering and comparison are
-still deferred. Claim and whole-answer reviews are append-only, source-freshness
-checked, and separate from generated suggestions. Evidence-bound synthesis
-combines resolved ledgers without smoothing contradictions or promoting cached
-navigation summaries to fact.
+reviewed training examples while the configured focal author remains the
+backward-compatible runtime default. Exact catalog names and explicit UI/API
+selections now drive hard author filtering before every dense, BM25, or fused
+ranking, with a defensive check on retained passages. Single-author scopes
+retain coauthored documents and their complete
+credits. Comparison scopes require retrieved and cited coverage for every
+selected author or generation abstains. Claim and whole-answer reviews are
+append-only, source-freshness checked, and separate from generated suggestions.
+Evidence-bound synthesis combines resolved ledgers without smoothing
+contradictions or promoting cached navigation summaries to fact.
 
 ## Setup
 
@@ -120,6 +127,16 @@ verification, total reasoning, and trace-persistence timings separately. A
 separate answer-review tab can accept, revise, or reject a historical answer.
 Accept and revise require current exact spans for every citation; ordinary chat
 use never counts as approval.
+
+The same panel includes an exact multi-select author scope. Choose one catalog
+author for a focused view, multiple authors for comparison, or **Entire
+corpus**. Query names and a selected scope must agree; a mismatch or unknown
+selection fails rather than silently falling back. Author filtering is a hard
+exclusion applied before dense, lexical, and fused ranking, followed by a
+defensive author-credit check on every retained passage. It cannot leak another
+author's sole-authored passages, but semantic coverage remains non-exhaustive:
+missing indexed evidence or a comparison without relevant evidence for every
+selected author returns an insufficiency instead of inventing coverage.
 
 Evaluate private labels tied to generated trace/candidate/evidence IDs:
 
@@ -232,10 +249,11 @@ Semantic retrieval can additionally use trusted nicknames or pen names from the
 private `AUTHOR_CORPUS_DEFAULT_AUTHOR_ALIASES` JSON array. These aliases are
 validated against catalog author credits and rejected when they collide with
 another author. The resolver never guesses aliases with fuzzy matching. It
-normalizes configured author references to a corpus-author role and can add
-generic biographical search terms for personal-profile questions, while the
-grounded model receives the user's actual question with only those trusted
-references canonicalized. The resolution is inspectable on
+also recognizes complete catalog names, normalizes resolved references to a
+selected-author retrieval role, and can add generic biographical search terms
+for personal-profile questions. The grounded model receives the user's actual
+question with only trusted references canonicalized. The resolution and hard
+scope are inspectable on
 `CorpusQueryResult.author_resolution`.
 
 Semantic retrieval deliberately reports `exhaustive=False` and returns its

@@ -2,12 +2,15 @@
 
 from pathlib import Path
 
+from llama_index.core import VectorStoreIndex
 from llama_index.core.base.base_retriever import BaseRetriever
+from llama_index.core.embeddings import MockEmbedding
 from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
 
-from author_corpus.hybrid import ReciprocalRankFusionRetriever, RetrieverArm, bm25_index_exists
+from author_corpus.hybrid import ReciprocalRankFusionRetriever, RetrieverArm, bm25_index_exists, build_retrieval_profiles
 from author_corpus.persistence import CacheLayout
 from author_corpus.retrieval import SemanticCorpusSearch
+from author_corpus.scope import AuthorScope
 
 
 class RankedRetriever(BaseRetriever):
@@ -106,3 +109,51 @@ def test_bm25_cache_requires_complete_current_manifest(tmp_path: Path) -> None:
     assert bm25_index_exists(layout) is True
     assert bm25_index_exists(layout, expected_node_count=2) is True
     assert bm25_index_exists(layout, expected_node_count=3) is False
+
+
+def test_all_runtime_strategies_prefilter_a_rare_author_before_ranking(tmp_path: Path) -> None:
+    """Give a one-node author a fair ranking pool instead of filtering only the global top 30."""
+    nodes = [
+        TextNode(
+            id_=f"avery-{ordinal}",
+            text="Generic advice without identifying terms.",
+            metadata={
+                "document_id": f"avery-{ordinal}",
+                "title": f"Avery {ordinal}",
+                "authors": '["Avery Stone"]',
+                "author_keys": ["avery stone"],
+                "document_type": "article",
+            },
+        )
+        for ordinal in range(40)
+    ]
+    nodes.append(
+        TextNode(
+            id_="jamie-only",
+            text="Generic advice without identifying terms.",
+            metadata={
+                "document_id": "jamie-only",
+                "title": "Jamie Only",
+                "authors": '["Jamie River"]',
+                "author_keys": ["jamie river"],
+                "document_type": "article",
+            },
+        )
+    )
+    index = VectorStoreIndex(nodes, embed_model=MockEmbedding(embed_dim=8))
+    profiles, _loaded = build_retrieval_profiles(
+        index,
+        CacheLayout(tmp_path, "scoped"),
+        candidate_pool_size=30,
+    )
+    scope = AuthorScope.for_author("Jamie River")
+
+    for search in (
+        profiles.discovery,
+        profiles.dense_evidence,
+        profiles.lexical_evidence,
+        profiles.hybrid_evidence,
+    ):
+        result = search.search("generic advice", author_scope=scope)
+        assert [passage.document_id for passage in result.passages] == ["jamie-only"]
+        assert result.discarded_by_author_filter == 0

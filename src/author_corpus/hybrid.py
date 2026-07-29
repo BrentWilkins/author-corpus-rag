@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from llama_index.core import VectorStoreIndex
 from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle
+from llama_index.core.vector_stores.types import FilterOperator, MetadataFilter, MetadataFilters
 from llama_index.retrievers.bm25 import BM25Retriever  # type: ignore[import-untyped]
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from author_corpus.persistence import CacheLayout
 from author_corpus.retrieval import RetrievalContribution, ScoreKind, SemanticCorpusSearch
+from author_corpus.scope import AuthorScope
 
 _CONTRIBUTIONS_KEY = "_retrieval_contributions"
 _BM25_INDEX_VERSION = "bm25s-en-stemmed-v1"
@@ -145,6 +149,14 @@ class ReciprocalRankFusionRetriever(BaseRetriever):
         return fused
 
 
+class _EmptyRetriever(BaseRetriever):
+    """Return no candidates when a valid scope has no indexed nodes."""
+
+    def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+        """Return an empty ranking."""
+        return []
+
+
 def load_or_build_bm25_retriever(
     index: VectorStoreIndex,
     layout: CacheLayout,
@@ -199,6 +211,29 @@ def build_retrieval_profiles(
         ),
         similarity_top_k=candidate_pool_size,
     )
+
+    def dense_scope_factory(scope: AuthorScope) -> BaseRetriever:
+        return index.as_retriever(
+            similarity_top_k=candidate_pool_size,
+            filters=_author_filters(scope),
+        )
+
+    def lexical_scope_factory(scope: AuthorScope) -> BaseRetriever:
+        return _scoped_bm25_retriever(
+            lexical_retriever,
+            scope,
+            similarity_top_k=candidate_pool_size,
+        )
+
+    def hybrid_scope_factory(scope: AuthorScope) -> BaseRetriever:
+        return ReciprocalRankFusionRetriever(
+            (
+                RetrieverArm("dense", dense_scope_factory(scope), "cosine_similarity"),
+                RetrieverArm("lexical", lexical_scope_factory(scope), "bm25"),
+            ),
+            similarity_top_k=candidate_pool_size,
+        )
+
     return (
         RetrievalProfiles(
             discovery=SemanticCorpusSearch(
@@ -207,6 +242,7 @@ def build_retrieval_profiles(
                 max_passages_per_document=1,
                 strategy="dense_discovery",
                 score_kind="cosine_similarity",
+                scoped_retriever_factory=dense_scope_factory,
             ),
             dense_evidence=SemanticCorpusSearch(
                 dense_retriever,
@@ -214,6 +250,7 @@ def build_retrieval_profiles(
                 max_passages_per_document=evidence_passages_per_document,
                 strategy="dense_evidence",
                 score_kind="cosine_similarity",
+                scoped_retriever_factory=dense_scope_factory,
             ),
             lexical_evidence=SemanticCorpusSearch(
                 lexical_retriever,
@@ -221,6 +258,7 @@ def build_retrieval_profiles(
                 max_passages_per_document=evidence_passages_per_document,
                 strategy="lexical_evidence",
                 score_kind="bm25",
+                scoped_retriever_factory=lexical_scope_factory,
             ),
             hybrid_evidence=SemanticCorpusSearch(
                 hybrid_retriever,
@@ -228,10 +266,62 @@ def build_retrieval_profiles(
                 max_passages_per_document=evidence_passages_per_document,
                 strategy="hybrid_evidence",
                 score_kind="reciprocal_rank_fusion",
+                scoped_retriever_factory=hybrid_scope_factory,
             ),
         ),
         lexical_loaded_from_cache,
     )
+
+
+def _author_filters(scope: AuthorScope) -> MetadataFilters:
+    if scope.kind == "corpus":
+        raise ValueError("Corpus-wide retrieval does not require an author filter.")
+    return MetadataFilters(
+        filters=[
+            MetadataFilter(
+                key="author_keys",
+                value=[author.casefold() for author in scope.authors],
+                operator=FilterOperator.ANY,
+            )
+        ]
+    )
+
+
+def _scoped_bm25_retriever(
+    retriever: BaseRetriever,
+    scope: AuthorScope,
+    *,
+    similarity_top_k: int,
+) -> BaseRetriever:
+    bm25_retriever = cast(BM25Retriever, retriever)
+    corpus = bm25_retriever.corpus
+    mask = _bm25_author_mask(corpus, scope)
+    if not any(mask):
+        return _EmptyRetriever()
+    scoped = BM25Retriever(
+        existing_bm25=bm25_retriever.bm25,
+        stemmer=bm25_retriever.stemmer,
+        similarity_top_k=min(similarity_top_k, sum(mask)),
+        skip_stemming=bm25_retriever.skip_stemming,
+        token_pattern=bm25_retriever.token_pattern,
+    )
+    scoped.corpus = corpus
+    scoped.corpus_weight_mask = mask
+    return cast(BaseRetriever, scoped)
+
+
+def _bm25_author_mask(corpus: object, scope: AuthorScope) -> list[int]:
+    if not isinstance(corpus, list):
+        raise ValueError("The BM25 corpus is unavailable for author-scoped retrieval.")
+    selected = {author.casefold() for author in scope.authors}
+    mask: list[int] = []
+    for entry in corpus:
+        if not isinstance(entry, Mapping):
+            raise ValueError("The BM25 corpus contains invalid metadata.")
+        value = entry.get("author_keys")
+        author_keys = {item.casefold() for item in value if isinstance(item, str)} if isinstance(value, list) else set()
+        mask.append(int(bool(selected.intersection(author_keys))))
+    return mask
 
 
 def bm25_index_exists(layout: CacheLayout, *, expected_node_count: int | None = None) -> bool:

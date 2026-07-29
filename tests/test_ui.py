@@ -16,9 +16,11 @@ from author_corpus.claim_extraction import (
 from author_corpus.ingestion import load_corpus
 from author_corpus.persistence import corpus_fingerprint
 from author_corpus.review import ClaimReviewProposal, ClaimReviewStore, ClaimReviewWorkspace
+from author_corpus.scope import AuthorScope
 from author_corpus.service import CorpusQueryService
 from author_corpus.tracing import QueryTraceStore
 from author_corpus.ui import (
+    _author_scope,
     _user_history,
     answer_claim_extraction_markdown,
     build_chat_interface,
@@ -41,7 +43,19 @@ def test_builds_gradio_chat_without_starting_a_server() -> None:
     assert interface.save_history is False
     assert interface.chatbot.height == "72vh"
     assert interface.chatbot.min_height == 480
-    assert len(interface.additional_inputs) == 2
+    assert len(interface.additional_inputs) == 3
+
+
+def test_author_selector_builds_exact_single_and_comparison_scopes() -> None:
+    """Keep UI selections typed and reject a mixed corpus-wide sentinel."""
+    assert _author_scope(["Avery Stone"]) == AuthorScope.for_author("Avery Stone")
+    assert _author_scope(["Avery Stone", "Jamie River"]) == AuthorScope(
+        kind="comparison",
+        authors=("Avery Stone", "Jamie River"),
+    )
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        _author_scope(["__entire_corpus__", "Avery Stone"])
 
 
 def test_gradio_history_keeps_user_text_and_discards_assistant_output() -> None:

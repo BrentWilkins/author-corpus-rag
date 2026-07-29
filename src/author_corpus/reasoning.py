@@ -264,15 +264,18 @@ class BoundedReasoningEngine:
             retrieval_started = perf_counter()
             inspected_candidates = 0
             discarded = 0
+            author_discarded = 0
             for query in queries:
                 result = self.search.search(
                     query,
                     limit=self.evidence_limit,
                     minimum_document_author_fraction=minimum_document_author_fraction,
+                    author_scope=scope,
                 )
                 passages = _merge_passages(passages, result.passages, limit=self.evidence_limit)
                 inspected_candidates += result.inspected_candidates
                 discarded += result.discarded_by_voice_filter
+                author_discarded += result.discarded_by_author_filter
             retrieval_seconds = perf_counter() - retrieval_started
             merged = SemanticSearchResult(
                 query=question,
@@ -281,6 +284,13 @@ class BoundedReasoningEngine:
                 passages=tuple(passage.model_copy(update={"rank": rank}) for rank, passage in enumerate(passages, start=1)),
                 inspected_candidates=inspected_candidates,
                 discarded_by_voice_filter=discarded,
+                discarded_by_author_filter=author_discarded,
+                author_scope=scope,
+                represented_authors=tuple(
+                    author
+                    for author in scope.authors
+                    if any(author.casefold() in {credited.casefold() for credited in passage.authors} for passage in passages)
+                ),
             )
 
             generation_started = perf_counter()
@@ -326,6 +336,9 @@ class BoundedReasoningEngine:
             passages=final_answer.evidence,
             inspected_candidates=sum(round_.retrieved_passages for round_ in rounds),
             discarded_by_voice_filter=0,
+            discarded_by_author_filter=merged.discarded_by_author_filter,
+            author_scope=scope,
+            represented_authors=merged.represented_authors,
         )
         return ReasonedAnswer(
             grounded_answer=final_answer,
@@ -426,7 +439,7 @@ def _safe_answer(draft: GroundedAnswer, verifications: tuple[ClaimVerification, 
             cited_evidence_numbers=(),
             model_id=draft.model_id,
             prompt_version=draft.prompt_version,
-            status="citation_failure" if draft.status == "citation_failure" else "verification_abstention",
+            status=draft.status if draft.status != "answered" else "verification_abstention",
             generation_attempts=draft.generation_attempts,
         )
     lines = tuple(

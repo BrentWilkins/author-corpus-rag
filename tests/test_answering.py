@@ -4,7 +4,8 @@ from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
 
 from author_corpus.answering import INSUFFICIENT_EVIDENCE_ANSWER, GroundedAnswerer
-from author_corpus.retrieval import SemanticCorpusSearch
+from author_corpus.retrieval import RetrievedPassage, SemanticCorpusSearch, SemanticSearchResult
+from author_corpus.scope import AuthorScope
 
 
 class EvidenceRetriever(BaseRetriever):
@@ -168,3 +169,44 @@ def test_answer_can_separate_retrieval_wording_from_user_question() -> None:
 
     assert result.query == "corpus author personal facts biography"
     assert "Question:\nWhat are Av's favorite things?" in prompts[0]
+
+
+def test_comparison_answer_must_cite_evidence_covering_every_author() -> None:
+    """Abstain when a fluent comparison draft cites only one requested author."""
+    search = SemanticCorpusSearch(EvidenceRetriever())
+    search_result = SemanticSearchResult(
+        query="compare approaches",
+        passages=(
+            RetrievedPassage(
+                rank=1,
+                document_id="avery-work",
+                title="Avery Work",
+                authors=("Avery Stone",),
+                document_type="article",
+                text="Avery recommends gradual changes.",
+            ),
+            RetrievedPassage(
+                rank=2,
+                document_id="jamie-work",
+                title="Jamie Work",
+                authors=("Jamie River",),
+                document_type="article",
+                text="Jamie recommends short experiments.",
+            ),
+        ),
+        inspected_candidates=2,
+        author_scope=AuthorScope(kind="comparison", authors=("Avery Stone", "Jamie River")),
+        represented_authors=("Avery Stone", "Jamie River"),
+    )
+    answerer = GroundedAnswerer(
+        search,
+        lambda prompt: "Avery recommends gradual changes [1].",
+        model_id="synthetic-model",
+    )
+
+    result = answerer.answer_from_search_result(search_result)
+
+    assert result.status == "scope_incomplete"
+    assert result.cited_evidence_numbers == ()
+    assert result.generation_attempts[0].valid_citation_numbers == (1,)
+    assert "every requested author" in result.to_markdown()

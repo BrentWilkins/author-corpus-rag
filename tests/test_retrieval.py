@@ -1,12 +1,14 @@
 """Tests for inspectable semantic corpus retrieval."""
 
 import hashlib
+import json
 
 import pytest
 from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
 
 from author_corpus.retrieval import SemanticCorpusSearch
+from author_corpus.scope import AuthorScope
 
 
 class SyntheticRetriever(BaseRetriever):
@@ -89,6 +91,66 @@ def test_search_can_require_predominantly_document_author_voice() -> None:
         "A passage from another synthetic work.",
     ]
     assert result.discarded_by_voice_filter == 1
+
+
+def test_search_hard_filters_authors_and_retains_coauthored_documents() -> None:
+    """Exclude unrelated credits while retaining a selected author's shared work."""
+    candidates = (
+        _candidate(
+            document_id="avery-only",
+            title="Avery Work",
+            text="Avery-only passage.",
+            score=0.95,
+            document_author_fraction=1.0,
+            authors=("Avery Stone",),
+        ),
+        _candidate(
+            document_id="shared",
+            title="Shared Work",
+            text="Jointly credited passage.",
+            score=0.90,
+            document_author_fraction=1.0,
+            authors=("Avery Stone", "Jamie River"),
+        ),
+        _candidate(
+            document_id="jamie-only",
+            title="Jamie Work",
+            text="Jamie-only passage.",
+            score=0.85,
+            document_author_fraction=1.0,
+            authors=("Jamie River",),
+        ),
+    )
+
+    class MultiAuthorRetriever(BaseRetriever):
+        """Return a mixed-author ranking."""
+
+        def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+            """Return all candidates in deterministic rank order."""
+            assert query_bundle.query_str
+            return list(candidates)
+
+    result = SemanticCorpusSearch(MultiAuthorRetriever(), default_limit=3).search(
+        "training",
+        author_scope=AuthorScope.for_author("Jamie River"),
+    )
+
+    assert [passage.document_id for passage in result.passages] == ["shared", "jamie-only"]
+    assert result.discarded_by_author_filter == 1
+    assert result.represented_authors == ("Jamie River",)
+    assert result.missing_scoped_authors == ()
+
+
+def test_search_reports_missing_comparison_author_without_relaxing_scope() -> None:
+    """Expose incomplete comparison coverage instead of admitting another author."""
+    result = SemanticCorpusSearch(SyntheticRetriever(), default_limit=3).search(
+        "compare approaches",
+        author_scope=AuthorScope(kind="comparison", authors=("Avery Stone", "Jamie River")),
+    )
+
+    assert result.represented_authors == ("Avery Stone",)
+    assert result.missing_scoped_authors == ("Jamie River",)
+    assert all(passage.authors == ("Avery Stone",) for passage in result.passages)
 
 
 def test_search_rejects_corrupt_internal_contribution_metadata() -> None:
@@ -182,6 +244,7 @@ def _candidate(
     text: str,
     score: float,
     document_author_fraction: float,
+    authors: tuple[str, ...] = ("Avery Stone",),
 ) -> NodeWithScore:
     return NodeWithScore(
         node=TextNode(
@@ -189,7 +252,7 @@ def _candidate(
             metadata={
                 "document_id": document_id,
                 "title": title,
-                "authors": '["Avery Stone"]',
+                "authors": json.dumps(authors),
                 "published_at": "2026-01-01",
                 "document_type": "article",
                 "source_uris": f'["https://example.test/{title.split()[0].lower()}"]',

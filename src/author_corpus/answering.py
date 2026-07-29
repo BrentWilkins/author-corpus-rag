@@ -10,11 +10,18 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from author_corpus.audit import EvidenceSpan
 from author_corpus.retrieval import RetrievedPassage, SemanticCorpusSearch, SemanticSearchResult
+from author_corpus.scope import AuthorScope
 
 ANSWER_PROMPT_VERSION = "grounded-answer-v1"
 INSUFFICIENT_EVIDENCE_ANSWER = "The retrieved evidence is insufficient to answer this question."
 TextCompleter = Callable[[str], str]
-AnswerStatus = Literal["answered", "insufficient_evidence", "citation_failure", "verification_abstention"]
+AnswerStatus = Literal[
+    "answered",
+    "insufficient_evidence",
+    "scope_incomplete",
+    "citation_failure",
+    "verification_abstention",
+]
 
 
 class GenerationAttempt(BaseModel):
@@ -117,12 +124,14 @@ class GroundedAnswerer:
         query: str,
         *,
         minimum_document_author_fraction: float | None = None,
+        author_scope: AuthorScope | None = None,
     ) -> GroundedAnswer:
         """Answer one semantic question from retrieved evidence only."""
         search_result = self.search.search(
             query,
             limit=self.evidence_limit,
             minimum_document_author_fraction=minimum_document_author_fraction,
+            author_scope=author_scope,
         )
         return self.answer_from_search_result(search_result)
 
@@ -147,11 +156,22 @@ class GroundedAnswerer:
                 prompt_version=self.prompt_version,
                 status="insufficient_evidence",
             )
+        if search_result.missing_scoped_authors:
+            return GroundedAnswer(
+                query=search_result.query,
+                answer=INSUFFICIENT_EVIDENCE_ANSWER,
+                evidence=evidence,
+                cited_evidence_numbers=(),
+                model_id=self.model_id,
+                prompt_version=self.prompt_version,
+                status="scope_incomplete",
+            )
 
         prompt = _answer_prompt(
             answer_question,
             evidence,
             max_passage_characters=self.max_passage_characters,
+            author_scope=search_result.author_scope,
         )
         answer = self.complete(prompt).strip()
         citations = _citation_numbers(answer, evidence_count=len(evidence))
@@ -169,6 +189,17 @@ class GroundedAnswerer:
                 model_id=self.model_id,
                 prompt_version=self.prompt_version,
                 status="citation_failure",
+                generation_attempts=tuple(attempts),
+            )
+        if _missing_cited_scope_authors(evidence, citations, search_result.author_scope):
+            return GroundedAnswer(
+                query=search_result.query,
+                answer=INSUFFICIENT_EVIDENCE_ANSWER,
+                evidence=evidence,
+                cited_evidence_numbers=(),
+                model_id=self.model_id,
+                prompt_version=self.prompt_version,
+                status="scope_incomplete",
                 generation_attempts=tuple(attempts),
             )
 
@@ -189,6 +220,7 @@ def _answer_prompt(
     evidence: tuple[RetrievedPassage, ...],
     *,
     max_passage_characters: int,
+    author_scope: AuthorScope,
 ) -> str:
     rendered_evidence = "\n\n".join(
         _render_evidence(number, passage, max_passage_characters=max_passage_characters)
@@ -206,6 +238,7 @@ Rules:
 - Do not assume quoted speech belongs to a document author. Use the supplied voice provenance.
 - "document_author" refers to the document's complete listed author set, not one individual coauthor.
 - Be concise and distinguish uncertainty from established information.
+- Respect the author scope: {_scope_instruction(author_scope)}
 
 Question:
 {query}
@@ -279,4 +312,26 @@ def _status_diagnostic(answer: GroundedAnswer) -> str:
         return f"\n\n_Generation abstained after {attempts} attempt(s) without valid evidence citations._"
     if answer.status == "verification_abstention":
         return "\n\n_Claim verification did not admit any generated claim._"
+    if answer.status == "scope_incomplete":
+        return "\n\n_Generation abstained because retrieved evidence did not cover every requested author._"
     return ""
+
+
+def _scope_instruction(scope: AuthorScope) -> str:
+    if scope.kind == "corpus":
+        return "the complete corpus; do not assign coauthored prose to one person."
+    authors = ", ".join(scope.authors)
+    if scope.kind == "comparison":
+        return f"compare only {authors}; preserve coauthorship and do not infer an individual voice from shared work."
+    return f"answer only about documents credited to {authors}; preserve any coauthor attribution."
+
+
+def _missing_cited_scope_authors(
+    evidence: tuple[RetrievedPassage, ...],
+    citations: tuple[int, ...],
+    scope: AuthorScope,
+) -> tuple[str, ...]:
+    if scope.kind != "comparison":
+        return ()
+    credited = {author.casefold() for number in citations for author in evidence[number - 1].authors}
+    return tuple(author for author in scope.authors if author.casefold() not in credited)

@@ -9,6 +9,8 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from author_corpus.scope import AuthorScope
+
 _GENERIC_AUTHOR_REFERENCE = re.compile(
     r"\b(?:(?:the\s+)?(?:main|corpus)\s+(?:author|writer)|(?:the|this)\s+(?:author|writer))"
     r"(?P<possessive>['’]s)?\b",
@@ -29,7 +31,8 @@ _FAMILY_SIGNAL = re.compile(
     re.IGNORECASE,
 )
 _REDUNDANT_AUTHORSHIP_CLAUSE = re.compile(
-    r"\b(?:the\s+)?corpus author\s+is\s+(?:(?:the\s+)?author|(?:the\s+)?corpus author)\s+of\s+"
+    r"\b(?:the\s+)?(?:corpus|selected) author\s+is\s+"
+    r"(?:(?:the\s+)?author|(?:the\s+)?(?:corpus|selected) author)\s+of\s+"
     r"(?:all\s+of\s+)?(?:the\s+)?(?:articles|documents|posts|works|pieces)\s*[.;:]?\s*",
     re.IGNORECASE,
 )
@@ -125,6 +128,8 @@ class AuthorQueryResolution(BaseModel):
     retrieval_query: str = Field(min_length=1)
     grounding_question: str = Field(min_length=1)
     canonical_author: str | None = None
+    canonical_authors: tuple[str, ...] = ()
+    author_scope: AuthorScope = Field(default_factory=AuthorScope)
     matched_references: tuple[str, ...] = ()
     added_profile_context: bool = False
 
@@ -147,7 +152,13 @@ def parse_author_aliases(value: str | None) -> tuple[str, ...]:
     return tuple(_display(item) for item in decoded)
 
 
-def resolve_author_query(query: str, identity: AuthorIdentity | None) -> AuthorQueryResolution:
+def resolve_author_query(
+    query: str,
+    identity: AuthorIdentity | None,
+    *,
+    catalog_authors: Iterable[str] = (),
+    requested_scope: AuthorScope | None = None,
+) -> AuthorQueryResolution:
     """Replace only configured identity references with a semantic corpus role.
 
     This function never guesses nicknames or uses fuzzy name similarity. Alias
@@ -156,54 +167,78 @@ def resolve_author_query(query: str, identity: AuthorIdentity | None) -> AuthorQ
     original = query.strip()
     if not original:
         raise ValueError("Query must not be empty.")
-    if identity is None:
-        return AuthorQueryResolution(
-            original_query=original,
-            retrieval_query=original,
-            grounding_question=original,
-        )
-
-    matched = [match.group() for match in _GENERIC_AUTHOR_REFERENCE.finditer(original)]
+    canonical_by_key = {_key(author): _display(author) for author in catalog_authors}
+    if identity is not None:
+        canonical_by_key.setdefault(_key(identity.canonical_name), identity.canonical_name)
+    scope = _canonical_scope(requested_scope, canonical_by_key)
+    matched: list[str] = []
+    matched_authors: list[str] = []
+    retrieval_query = original
+    grounding_question = original
+    generic_matches = tuple(_GENERIC_AUTHOR_REFERENCE.finditer(original))
+    generic_author = _generic_author(identity, scope)
+    if generic_matches and generic_author is None:
+        raise ValueError("A generic author reference is ambiguous for the selected author scope.")
+    matched.extend(match.group() for match in generic_matches)
+    if generic_author is not None and generic_matches:
+        matched_authors.append(generic_author)
 
     def generic_replacement(match: re.Match[str]) -> str:
-        return "the corpus author's" if match.group("possessive") else "the corpus author"
+        return "the selected author's" if match.group("possessive") else "the selected author"
 
-    def canonical_replacement(match: re.Match[str]) -> str:
+    def generic_grounding_replacement(match: re.Match[str]) -> str:
         suffix = "'s" if match.group("possessive") else ""
-        return f"{identity.canonical_name}{suffix}"
+        return f"{generic_author}{suffix}"
 
-    retrieval_query = _GENERIC_AUTHOR_REFERENCE.sub(generic_replacement, original)
-    grounding_question = _GENERIC_AUTHOR_REFERENCE.sub(canonical_replacement, original)
-    identity_terms = (identity.canonical_name, *identity.aliases)
-    alternatives = "|".join(re.escape(term) for term in sorted(identity_terms, key=len, reverse=True))
-    identity_pattern = re.compile(
-        rf"(?<!\w)(?:{alternatives})(?P<possessive>['’]s)?(?!\w)",
-        re.IGNORECASE,
-    )
+    if generic_matches:
+        retrieval_query = _GENERIC_AUTHOR_REFERENCE.sub(generic_replacement, retrieval_query)
+        grounding_question = _GENERIC_AUTHOR_REFERENCE.sub(generic_grounding_replacement, grounding_question)
 
-    def identity_replacement(match: re.Match[str]) -> str:
+    terms = dict(canonical_by_key)
+    if identity is not None:
+        terms.update({_key(alias): identity.canonical_name for alias in identity.aliases})
+    identity_pattern = _author_pattern(terms)
+
+    def retrieval_identity_replacement(match: re.Match[str]) -> str:
+        canonical = terms[_key(match.group("name"))]
         matched.append(match.group())
-        return "the corpus author's" if match.group("possessive") else "the corpus author"
+        matched_authors.append(canonical)
+        return "the selected author's" if match.group("possessive") else "the selected author"
 
-    retrieval_query = identity_pattern.sub(identity_replacement, retrieval_query)
-    grounding_question = identity_pattern.sub(canonical_replacement, grounding_question)
+    def grounding_identity_replacement(match: re.Match[str]) -> str:
+        canonical = terms[_key(match.group("name"))]
+        suffix = "'s" if match.group("possessive") else ""
+        return f"{canonical}{suffix}"
 
-    if not matched:
-        return AuthorQueryResolution(
-            original_query=original,
-            retrieval_query=original,
-            grounding_question=original,
+    if identity_pattern is not None:
+        retrieval_query = identity_pattern.sub(retrieval_identity_replacement, retrieval_query)
+        grounding_question = identity_pattern.sub(grounding_identity_replacement, grounding_question)
+
+    if matched:
+        retrieval_query = re.sub(
+            r"\b(?:the\s+author\s+)?the selected author\b",
+            "the selected author",
+            retrieval_query,
+            flags=re.IGNORECASE,
         )
-
-    retrieval_query = re.sub(
-        r"\b(?:the\s+author\s+)?the corpus author\b", "the corpus author", retrieval_query, flags=re.IGNORECASE
-    )
-    retrieval_query = _REDUNDANT_AUTHORSHIP_CLAUSE.sub("Regarding the corpus author, ", retrieval_query)
-    retrieval_query = " ".join(retrieval_query.split())
+        retrieval_query = _REDUNDANT_AUTHORSHIP_CLAUSE.sub("Regarding the selected author, ", retrieval_query)
+        retrieval_query = " ".join(retrieval_query.split())
+    inferred_authors = tuple(dict.fromkeys(matched_authors))
+    if scope is None:
+        if len(inferred_authors) > 1:
+            scope = AuthorScope(kind="comparison", authors=inferred_authors)
+        elif inferred_authors:
+            scope = AuthorScope.for_author(inferred_authors[0])
+        elif identity is not None:
+            scope = AuthorScope.for_author(identity.canonical_name)
+        else:
+            scope = AuthorScope()
+    elif inferred_authors and not _scope_contains(scope, inferred_authors):
+        raise ValueError("The query names an author outside the explicitly selected author scope.")
 
     added_profile_context = bool(_PROFILE_SIGNAL.search(original))
-    if added_profile_context:
-        profile_terms = ["corpus author", "personal facts", "biography"]
+    if added_profile_context and matched:
+        profile_terms = ["selected author", "personal facts", "biography"]
         if _INTEREST_SIGNAL.search(original):
             profile_terms.extend(("interests", "preferences"))
         if _FAMILY_SIGNAL.search(original):
@@ -214,10 +249,52 @@ def resolve_author_query(query: str, identity: AuthorIdentity | None) -> AuthorQ
         original_query=original,
         retrieval_query=retrieval_query,
         grounding_question=grounding_question,
-        canonical_author=identity.canonical_name if matched else None,
+        canonical_author=inferred_authors[0] if len(inferred_authors) == 1 else None,
+        canonical_authors=inferred_authors,
+        author_scope=scope,
         matched_references=tuple(dict.fromkeys(matched)),
         added_profile_context=added_profile_context,
     )
+
+
+def _canonical_scope(
+    scope: AuthorScope | None,
+    canonical_by_key: dict[str, str],
+) -> AuthorScope | None:
+    if scope is None or scope.kind == "corpus":
+        return scope
+    authors: list[str] = []
+    for author in scope.authors:
+        canonical = canonical_by_key.get(_key(author))
+        if canonical is None:
+            raise ValueError(f"Unknown author in requested scope: {author!r}.")
+        authors.append(canonical)
+    if len(authors) > 1:
+        return AuthorScope(kind="comparison", authors=tuple(authors))
+    return AuthorScope(kind="authors", authors=tuple(authors))
+
+
+def _generic_author(identity: AuthorIdentity | None, scope: AuthorScope | None) -> str | None:
+    if scope is not None:
+        return scope.authors[0] if len(scope.authors) == 1 else None
+    return identity.canonical_name if identity is not None else None
+
+
+def _author_pattern(terms: dict[str, str]) -> re.Pattern[str] | None:
+    if not terms:
+        return None
+    alternatives = "|".join(re.escape(term) for term in sorted(terms, key=len, reverse=True))
+    return re.compile(
+        rf"(?<!\w)(?P<name>{alternatives})(?P<possessive>['’]s)?(?!\w)",
+        re.IGNORECASE,
+    )
+
+
+def _scope_contains(scope: AuthorScope, authors: tuple[str, ...]) -> bool:
+    if scope.kind == "corpus":
+        return True
+    selected = {author.casefold() for author in scope.authors}
+    return all(author.casefold() in selected for author in authors)
 
 
 def _display(value: str) -> str:

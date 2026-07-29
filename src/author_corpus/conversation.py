@@ -8,6 +8,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict, Field
 
 from author_corpus.routing import QueryRoute, route_query
+from author_corpus.scope import AuthorScope
 from author_corpus.service import CorpusQueryResult, CorpusQueryService, VerifierMode
 
 
@@ -114,6 +115,7 @@ def ask_conversational(
     generate: bool = True,
     reason: bool = False,
     verifier: VerifierMode = "conservative",
+    author_scope: AuthorScope | None = None,
 ) -> ConversationTurn:
     """Resolve bounded context and execute through the normal safe query service."""
     resolution = resolve_conversation_query(query, history)
@@ -123,5 +125,6 @@ def ask_conversational(
         generate=generate,
         reason=reason,
         verifier=verifier,
+        author_scope=author_scope,
     )
     return ConversationTurn(resolution=resolution, result=result)

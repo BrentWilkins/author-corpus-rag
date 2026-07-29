@@ -19,6 +19,7 @@ from author_corpus.review import (
     ClaimReviewWorkspace,
     ResolvedClaimStatus,
 )
+from author_corpus.scope import AuthorScope
 from author_corpus.service import CorpusQueryService, VerifierMode
 from author_corpus.tracing import QueryTrace, QueryTraceStore
 
@@ -49,6 +50,7 @@ _VERIFIER_CHOICES: tuple[tuple[str, str], ...] = (
     ("Conservative lexical baseline", "conservative"),
     ("Structured semantic verifier (experimental)", "semantic"),
 )
+_CORPUS_SCOPE_VALUE = "__entire_corpus__"
 
 
 def build_chat_interface(
@@ -68,9 +70,30 @@ def build_chat_interface(
         label="Claim verifier",
         info="The semantic alternative adds model calls and is not the default until holdout evaluation supports it.",
     )
+    author_choices, default_authors = _author_scope_options(service)
+    authors = gr.Dropdown(
+        choices=author_choices,
+        value=default_authors,
+        multiselect=True,
+        label="Author scope",
+        info="Choose one author, select multiple for a comparison, or choose Entire corpus. Filtering is exact.",
+    )
 
-    def respond(message: str, history: list[dict[str, object]], use_reasoning: bool, verifier_mode: str) -> str:
-        return chat_response(service, message, history, reason=use_reasoning, verifier=verifier_mode)
+    def respond(
+        message: str,
+        history: list[dict[str, object]],
+        use_reasoning: bool,
+        verifier_mode: str,
+        selected_authors: list[str],
+    ) -> str:
+        return chat_response(
+            service,
+            message,
+            history,
+            reason=use_reasoning,
+            verifier=verifier_mode,
+            authors=selected_authors,
+        )
 
     return gr.ChatInterface(
         fn=respond,
@@ -84,13 +107,13 @@ def build_chat_interface(
             "Exact metadata questions use the exhaustive catalog. Content questions use source-grounded retrieval. "
             "Each answer shows its route, sources, and timing."
         ),
-        additional_inputs=[reasoning, verifier],
+        additional_inputs=[reasoning, verifier, authors],
         additional_inputs_accordion="Reasoning options",
         examples=[
-            ["How many articles has the author written here?", False, "conservative"],
-            ["Who are the other authors?", False, "conservative"],
-            ["What themes recur across the corpus?", False, "conservative"],
-            ["How did the author's advice change over time?", True, "conservative"],
+            ["How many articles has the author written here?", False, "conservative", default_authors],
+            ["Who are the other authors?", False, "conservative", default_authors],
+            ["What themes recur across the corpus?", False, "conservative", default_authors],
+            ["How did the author's advice change over time?", True, "conservative", default_authors],
         ],
         flagging_mode="never",
         analytics_enabled=False,
@@ -106,10 +129,18 @@ def chat_response(
     *,
     reason: bool = False,
     verifier: str = "conservative",
+    authors: object = None,
 ) -> str:
     """Convert Gradio history and execute one bounded conversational turn."""
     verifier_mode = _verifier_mode(verifier)
-    turn = ask_conversational(service, message, _user_history(history), reason=reason, verifier=verifier_mode)
+    turn = ask_conversational(
+        service,
+        message,
+        _user_history(history),
+        reason=reason,
+        verifier=verifier_mode,
+        author_scope=_author_scope(authors),
+    )
     return turn.to_markdown()
 
 
@@ -728,6 +759,35 @@ def _verifier_mode(value: str) -> VerifierMode:
     if normalized == "semantic":
         return "semantic"
     raise ValueError(f"Unknown verifier mode: {value!r}.")
+
+
+def _author_scope_options(service: CorpusQueryService) -> tuple[tuple[tuple[str, str], ...], list[str]]:
+    if not isinstance(service, CorpusQueryService):
+        return ((("Entire corpus", _CORPUS_SCOPE_VALUE),), [_CORPUS_SCOPE_VALUE])
+    choices = (("Entire corpus", _CORPUS_SCOPE_VALUE),) + tuple((author, author) for author in service.available_authors)
+    default = list(service.default_scope.authors) or [_CORPUS_SCOPE_VALUE]
+    return choices, default
+
+
+def _author_scope(value: object) -> AuthorScope | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        authors = (value,)
+    elif isinstance(value, list) and all(isinstance(author, str) for author in value):
+        authors = tuple(value)
+    else:
+        raise ValueError("Author selection must be a list of configured author names.")
+    normalized = tuple(author.strip() for author in authors if author.strip())
+    if not normalized:
+        return None
+    if _CORPUS_SCOPE_VALUE in normalized:
+        if len(normalized) != 1:
+            raise ValueError("Entire corpus cannot be combined with individual authors.")
+        return AuthorScope()
+    if len(normalized) == 1:
+        return AuthorScope.for_author(normalized[0])
+    return AuthorScope(kind="comparison", authors=normalized)
 
 
 def _review_summary(review: ClaimReviewRecord) -> str:

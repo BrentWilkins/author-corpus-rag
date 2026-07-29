@@ -18,8 +18,10 @@ from author_corpus.catalog import CorpusCatalog
 from author_corpus.hybrid import RetrievalProfiles
 from author_corpus.ingestion import load_corpus
 from author_corpus.local_llm import LocalModelSettings
+from author_corpus.models import CorpusDocument
 from author_corpus.persistence import corpus_fingerprint
 from author_corpus.retrieval import SemanticCorpusSearch
+from author_corpus.scope import AuthorScope
 from author_corpus.service import QueryTraceContext
 from author_corpus.tracing import QueryTraceStore
 
@@ -53,6 +55,45 @@ class CountingRetriever(BaseRetriever):
                 ),
                 score=0.9,
             )
+        ]
+
+
+class MixedAuthorRetriever(BaseRetriever):
+    """Return synthetic sole-authored and coauthored passages."""
+
+    def __init__(self, *, include_jamie: bool = True) -> None:
+        """Choose whether the ranking covers both comparison authors."""
+        self.include_jamie = include_jamie
+        self.queries: list[str] = []
+        super().__init__()
+
+    def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+        """Return a deterministic mixed-author candidate pool."""
+        self.queries.append(query_bundle.query_str)
+        credits = [("avery-work", "Avery Work", '["Avery Stone"]')]
+        if self.include_jamie:
+            credits.extend(
+                (
+                    ("shared-work", "Shared Work", '["Avery Stone", "Jamie River"]'),
+                    ("jamie-work", "Jamie Work", '["Jamie River"]'),
+                )
+            )
+        return [
+            NodeWithScore(
+                node=TextNode(
+                    text=f"Advice from {title}.",
+                    metadata={
+                        "document_id": document_id,
+                        "title": title,
+                        "authors": authors,
+                        "document_type": "article",
+                        "passage_voice": "document_author",
+                        "document_author_fraction": 1.0,
+                    },
+                ),
+                score=0.95 - ordinal * 0.05,
+            )
+            for ordinal, (document_id, title, authors) in enumerate(credits)
         ]
 
 
@@ -102,6 +143,51 @@ def _service(
     return CorpusQueryService(catalog, profiles, default_author="Avery Stone", author_aliases=author_aliases)
 
 
+def _multi_author_service(
+    tmp_path: Path,
+    retriever: MixedAuthorRetriever,
+    *,
+    complete: Callable[[str], str] | None = None,
+) -> CorpusQueryService:
+    documents: list[CorpusDocument] = []
+    for filename, title, author in (
+        ("avery.md", "Avery Work", "Avery Stone"),
+        ("jamie.md", "Jamie Work", "Jamie River"),
+        ("shared.md", "Shared Work", '["Avery Stone", "Jamie River"]'),
+    ):
+        source = tmp_path / filename
+        source.write_text(
+            f"---\ntitle: {title}\nauthor: {author}\ndocument_type: article\n---\n\nSynthetic body.",
+            encoding="utf-8",
+        )
+        documents.extend(load_corpus([source]).documents)
+    catalog = CorpusCatalog(tmp_path / "multi-author-catalog.sqlite3")
+    catalog.rebuild(documents)
+    search = SemanticCorpusSearch(retriever, default_limit=6, max_passages_per_document=3)
+    profiles = RetrievalProfiles(
+        discovery=search,
+        dense_evidence=search,
+        lexical_evidence=search,
+        hybrid_evidence=search,
+    )
+    if complete is None:
+        return CorpusQueryService(catalog, profiles, default_author="Avery Stone")
+    settings = LocalModelSettings(model_id="synthetic-model", reasoning_effort="none")
+    return CorpusQueryService(
+        catalog,
+        profiles,
+        complete=complete,
+        model_id=settings.model_id,
+        default_author="Avery Stone",
+        trace_context=QueryTraceContext(
+            store=QueryTraceStore(tmp_path / "multi-author-traces.sqlite3"),
+            corpus_fingerprint=corpus_fingerprint(documents),
+            document_content_hashes={document.document_id: document.content_hash for document in documents},
+            generation_settings=settings,
+        ),
+    )
+
+
 def test_exact_question_bypasses_retrieval_and_generation(tmp_path: Path) -> None:
     """Keep counts entirely on the validated exhaustive catalog path."""
     retriever = CountingRetriever()
@@ -115,7 +201,7 @@ def test_exact_question_bypasses_retrieval_and_generation(tmp_path: Path) -> Non
     assert result.semantic is None
     assert result.grounded_answer is None
     assert retriever.queries == []
-    assert [timing.label for timing in result.timings] == ["routing", "exact catalog"]
+    assert [timing.label for timing in result.timings] == ["routing", "author identity", "exact catalog"]
 
 
 def test_semantic_generation_reuses_the_inspected_retrieval(tmp_path: Path) -> None:
@@ -233,7 +319,7 @@ def test_semantic_query_resolves_only_configured_author_alias(tmp_path: Path) ->
     result = service.ask("Tell me three personal facts about Av.")
 
     assert result.query == "Tell me three personal facts about Av."
-    assert result.retrieval_query == "corpus author personal facts biography"
+    assert result.retrieval_query == "selected author personal facts biography"
     assert retriever.queries == [result.retrieval_query]
     assert result.author_resolution is not None
     assert result.author_resolution.canonical_author == "Avery Stone"
@@ -275,3 +361,58 @@ def test_self_contained_semantic_question_does_not_inherit_history() -> None:
 
     assert resolution.used_previous_user_query is False
     assert resolution.retrieval_query == resolution.query
+
+
+def test_nondefault_catalog_name_hard_filters_semantic_results(tmp_path: Path) -> None:
+    """Infer an exact catalog author and exclude unrelated sole-authored passages."""
+    retriever = MixedAuthorRetriever()
+    service = _multi_author_service(tmp_path, retriever)
+
+    result = service.ask("What does Jamie River recommend?", generate=False)
+
+    assert result.author_scope == AuthorScope.for_author("Jamie River")
+    assert result.semantic is not None
+    assert [passage.document_id for passage in result.semantic.passages] == ["shared-work", "jamie-work"]
+    assert result.semantic.discarded_by_author_filter == 1
+    assert all("Jamie River" in passage.authors for passage in result.semantic.passages)
+
+
+def test_explicit_author_scope_controls_generic_exact_count(tmp_path: Path) -> None:
+    """Apply a UI/API selection to exhaustive generic authorship questions."""
+    service = _multi_author_service(tmp_path, MixedAuthorRetriever())
+
+    result = service.ask(
+        "How many articles has the author written here?",
+        author_scope=AuthorScope.for_author("Jamie River"),
+    )
+
+    assert result.exact is not None
+    assert result.exact.count == 2
+    assert result.exact.arguments.author == "Jamie River"
+    assert result.author_scope == AuthorScope.for_author("Jamie River")
+
+
+def test_incomplete_author_comparison_abstains_before_generation(tmp_path: Path) -> None:
+    """Do not ask the model to compare authors when one side has no retained evidence."""
+
+    def fail_if_called(prompt: str) -> str:
+        raise AssertionError(f"Model should not be called: {prompt}")
+
+    service = _multi_author_service(
+        tmp_path,
+        MixedAuthorRetriever(include_jamie=False),
+        complete=fail_if_called,
+    )
+
+    result = service.ask("Compare Avery Stone with Jamie River.")
+
+    assert result.semantic is not None
+    assert result.semantic.missing_scoped_authors == ("Jamie River",)
+    assert result.grounded_answer is not None
+    assert result.grounded_answer.status == "scope_incomplete"
+    assert result.trace_id is not None
+    assert service.trace_context is not None
+    trace = service.trace_context.store.get(result.trace_id)
+    assert trace is not None
+    assert trace.author_scope.kind == "comparison"
+    assert trace.author_scope.authors == ("Avery Stone", "Jamie River")

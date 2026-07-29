@@ -24,6 +24,7 @@ def test_structure_context_is_embedded_but_evidence_remains_original() -> None:
     assert "Synthetic Guide" in embedded
     assert "Guide > Safety Tip" in embedded
     assert safety.metadata["index_pipeline_version"] == INDEX_PIPELINE_VERSION
+    assert safety.metadata["author_keys"] == ["avery stone"]
     assert safety.metadata["source_span_version"] == EVIDENCE_SPAN_VERSION
     start = int(safety.metadata["source_start_char"])
     end = int(safety.metadata["source_end_char"])

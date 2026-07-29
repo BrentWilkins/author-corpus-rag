@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Literal
 
 from llama_index.core.base.base_retriever import BaseRetriever
@@ -12,8 +12,10 @@ from llama_index.core.schema import MetadataMode, NodeWithScore
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from author_corpus.audit import EVIDENCE_SPAN_VERSION, EvidenceSpan
+from author_corpus.scope import AuthorScope
 
 ScoreKind = Literal["cosine_similarity", "bm25", "reciprocal_rank_fusion", "unknown"]
+ScopedRetrieverFactory = Callable[[AuthorScope], BaseRetriever]
 
 _RETRIEVAL_CONTRIBUTIONS_KEY = "_retrieval_contributions"
 _EVIDENCE_SPAN_METADATA_KEYS = frozenset(
@@ -77,6 +79,9 @@ class SemanticSearchResult(BaseModel):
     passages: tuple[RetrievedPassage, ...]
     inspected_candidates: int = Field(ge=0)
     discarded_by_voice_filter: int = Field(default=0, ge=0)
+    discarded_by_author_filter: int = Field(default=0, ge=0)
+    author_scope: AuthorScope = Field(default_factory=AuthorScope)
+    represented_authors: tuple[str, ...] = ()
     exhaustive: bool = False
 
     @field_validator("query")
@@ -87,6 +92,12 @@ class SemanticSearchResult(BaseModel):
         if not query:
             raise ValueError("Semantic query must not be empty.")
         return query
+
+    @property
+    def missing_scoped_authors(self) -> tuple[str, ...]:
+        """Return requested authors absent from the retained evidence."""
+        represented = {author.casefold() for author in self.represented_authors}
+        return tuple(author for author in self.author_scope.authors if author.casefold() not in represented)
 
 
 class SemanticCorpusSearch:
@@ -100,6 +111,7 @@ class SemanticCorpusSearch:
         max_passages_per_document: int = 1,
         strategy: str = "dense",
         score_kind: ScoreKind = "cosine_similarity",
+        scoped_retriever_factory: ScopedRetrieverFactory | None = None,
     ) -> None:
         """Initialize search over a configured LlamaIndex retriever."""
         if default_limit < 1:
@@ -113,6 +125,8 @@ class SemanticCorpusSearch:
         self.max_passages_per_document = max_passages_per_document
         self.strategy = strategy.strip()
         self.score_kind = score_kind
+        self.scoped_retriever_factory = scoped_retriever_factory
+        self._scoped_retrievers: dict[str, BaseRetriever] = {}
 
     def search(
         self,
@@ -120,6 +134,7 @@ class SemanticCorpusSearch:
         *,
         limit: int | None = None,
         minimum_document_author_fraction: float | None = None,
+        author_scope: AuthorScope | None = None,
     ) -> SemanticSearchResult:
         """Return the highest-ranked passages without claiming full coverage."""
         normalized_query = query.strip()
@@ -130,11 +145,13 @@ class SemanticCorpusSearch:
             raise ValueError("limit must be at least 1.")
         if minimum_document_author_fraction is not None and not 0.0 <= minimum_document_author_fraction <= 1.0:
             raise ValueError("minimum_document_author_fraction must be between 0 and 1.")
+        scope = author_scope or AuthorScope()
 
-        candidates = self.retriever.retrieve(normalized_query)
+        candidates = self._retriever_for_scope(scope).retrieve(normalized_query)
         document_counts: Counter[str] = Counter()
         passages: list[RetrievedPassage] = []
         discarded_by_voice_filter = 0
+        discarded_by_author_filter = 0
         for candidate_rank, candidate in enumerate(candidates, start=1):
             document_id = _document_id(candidate)
             if document_counts[document_id] >= self.max_passages_per_document:
@@ -147,6 +164,9 @@ class SemanticCorpusSearch:
                 default_method=self.strategy,
                 default_score_kind=self.score_kind,
             )
+            if not _passage_matches_scope(passage, scope):
+                discarded_by_author_filter += 1
+                continue
             if minimum_document_author_fraction is not None and (
                 passage.document_author_fraction is None or passage.document_author_fraction < minimum_document_author_fraction
             ):
@@ -164,7 +184,20 @@ class SemanticCorpusSearch:
             passages=tuple(passages),
             inspected_candidates=len(candidates),
             discarded_by_voice_filter=discarded_by_voice_filter,
+            discarded_by_author_filter=discarded_by_author_filter,
+            author_scope=scope,
+            represented_authors=_represented_authors(passages, scope),
         )
+
+    def _retriever_for_scope(self, scope: AuthorScope) -> BaseRetriever:
+        if scope.kind == "corpus" or self.scoped_retriever_factory is None:
+            return self.retriever
+        cached = self._scoped_retrievers.get(scope.cache_key)
+        if cached is not None:
+            return cached
+        retriever = self.scoped_retriever_factory(scope)
+        self._scoped_retrievers[scope.cache_key] = retriever
+        return retriever
 
 
 def _to_passage(
@@ -212,6 +245,20 @@ def _to_passage(
             text=text,
         ),
     )
+
+
+def _passage_matches_scope(passage: RetrievedPassage, scope: AuthorScope) -> bool:
+    if scope.kind == "corpus":
+        return True
+    credited = {author.casefold() for author in passage.authors}
+    return any(author.casefold() in credited for author in scope.authors)
+
+
+def _represented_authors(passages: list[RetrievedPassage], scope: AuthorScope) -> tuple[str, ...]:
+    if scope.kind == "corpus":
+        return ()
+    credited = {author.casefold() for passage in passages for author in passage.authors}
+    return tuple(author for author in scope.authors if author.casefold() in credited)
 
 
 def _document_id(candidate: NodeWithScore) -> str:

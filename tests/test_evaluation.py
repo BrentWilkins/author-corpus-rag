@@ -7,6 +7,7 @@ from llama_index.core.schema import NodeWithScore, QueryBundle, TextNode
 
 from author_corpus.evaluation import evaluate_retrieval, evaluate_retrieval_strategies, load_retrieval_cases
 from author_corpus.retrieval import SemanticCorpusSearch
+from author_corpus.scope import AuthorScope
 
 
 class EvaluationRetriever(BaseRetriever):
@@ -180,6 +181,32 @@ cases:
     assert evaluation.cases[0].query == "Raw author wording."
 
 
+def test_evaluation_applies_the_same_hard_author_scope_as_runtime(tmp_path: Path) -> None:
+    """Measure scoped retrieval without a separate evaluation-only code path."""
+    path = tmp_path / "retrieval-eval.local.yaml"
+    path.write_text(
+        """\
+cases:
+  - name: scoped-query
+    query: Find the successful evidence.
+    relevant_document_ids:
+      - relevant
+    author_scope:
+      kind: authors
+      authors:
+        - Avery Stone
+""",
+        encoding="utf-8",
+    )
+    search = SemanticCorpusSearch(EvaluationRetriever(), default_limit=2)
+
+    evaluation = evaluate_retrieval(search, load_retrieval_cases(path), top_k=2)
+
+    assert evaluation.hit_rate == 1.0
+    assert evaluation.cases[0].retrieved_document_ids == ("relevant",)
+    assert evaluation.cases[0].author_scope == AuthorScope.for_author("Avery Stone")
+
+
 def _candidate(document_id: str, *, score: float) -> NodeWithScore:
     document_author_fraction = 0.2 if document_id == "unrelated" else 0.95
     return NodeWithScore(
@@ -188,6 +215,7 @@ def _candidate(document_id: str, *, score: float) -> NodeWithScore:
             metadata={
                 "document_id": document_id,
                 "title": document_id.title(),
+                "authors": '["Other Writer"]' if document_id == "unrelated" else '["Avery Stone"]',
                 "document_type": "article",
                 "section_path": '["Guide", "Advice"]',
                 "passage_voice": "mixed",

@@ -22,7 +22,10 @@ from author_corpus.structure import MARKDOWN_STRUCTURE_VERSION, MarkdownSection,
 from author_corpus.voice import VOICE_ANALYSIS_VERSION, VoiceAnalysis, analyze_voice, slice_voice_analysis
 
 VECTOR_INDEX_ID = "author-corpus-vector"
-INDEX_PIPELINE_VERSION = f"{MARKDOWN_STRUCTURE_VERSION}+{VOICE_ANALYSIS_VERSION}+{EVIDENCE_SPAN_VERSION}"
+AUTHOR_SCOPE_INDEX_VERSION = "author-scope-v1"
+INDEX_PIPELINE_VERSION = (
+    f"{MARKDOWN_STRUCTURE_VERSION}+{VOICE_ANALYSIS_VERSION}+{EVIDENCE_SPAN_VERSION}+{AUTHOR_SCOPE_INDEX_VERSION}"
+)
 
 _EMBED_CONTEXT_KEYS = frozenset({"title", "section_context", "section_lead"})
 _REQUIRED_INDEX_FILES = frozenset({"default__vector_store.json", "docstore.json", "index_store.json"})
@@ -142,6 +145,7 @@ def _document_metadata(document: CorpusDocument) -> dict[str, object]:
         "document_id": document.document_id,
         "title": document.title,
         "authors": json.dumps(list(document.authors), ensure_ascii=False),
+        "author_keys": [author.casefold() for author in document.authors],
         "author_names": " | ".join(document.authors),
         "published_at": document.published_at or "",
         "document_type": document.document_type,

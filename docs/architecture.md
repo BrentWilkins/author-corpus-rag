@@ -107,6 +107,7 @@ flowchart TB
     history[Conversation history]
     context[Bounded context resolver]
     identity[Conservative author identity resolver]
+    scope[Exact AuthorScope<br/>validation]
     router{Deterministic query router}
 
     exact_args[Validate author and type<br/>against catalog values]
@@ -117,6 +118,7 @@ flowchart TB
     dense[Dense candidates]
     bm25[BM25 candidates]
     rrf[Reciprocal-rank fusion]
+    author_filter[Author metadata prefilter<br/>plus retained-passage check]
     evidence[One inspected evidence set]
     generator[Optional grounded generation]
     reasoning[Optional bounded<br/>claim-level reasoning]
@@ -127,15 +129,18 @@ flowchart TB
     question --> context
     history --> context
     context --> identity
+    identity --> scope
 
     router -->|exact_catalog| exact_args --> exact_query --> exact_result
-    router -->|broad_discovery| discovery --> evidence
+    scope -. validated default .-> exact_args
+    router -->|broad_discovery| discovery --> author_filter --> evidence
     router -->|focused_evidence| dense --> rrf
     router -->|focused_evidence| bm25 --> rrf
     identity -. resolved semantic query .-> discovery
     identity -. resolved semantic query .-> dense
     identity -. resolved semantic query .-> bm25
-    rrf --> evidence
+    scope -. hard filter .-> author_filter
+    rrf --> author_filter
     evidence --> generator --> semantic_result
     evidence --> reasoning --> verifier --> semantic_result
     evidence -->|generation disabled| semantic_result
@@ -144,12 +149,24 @@ flowchart TB
 Routing always uses the literal current question. For semantic follow-ups, the
 context resolver may append only the immediately preceding user question to the
 retrieval query. It never appends generated assistant text, and it never
-rewrites an exact catalog question. The identity resolver then replaces only
-the configured default-author name, explicitly trusted aliases, and generic
-phrases such as “the author” with a corpus-author retrieval role. It does not
-guess nickname relationships. The literal or bounded-context question—not the
-retrieval keywords—is passed to grounded generation with only explicitly
-resolved author references canonicalized.
+rewrites an exact catalog question. The identity resolver recognizes complete
+catalog names, the configured default-author aliases, and generic phrases such
+as “the author.” It does not guess nickname relationships. An explicit UI/API
+scope is canonicalized against the catalog and must agree with names in the
+question. Every retrieval strategy then applies the same hard author-credit
+exclusion before evidence is retained. The literal or bounded-context
+question—not the retrieval keywords—is passed to grounded generation with
+explicitly resolved references canonicalized.
+
+A single-author scope includes sole-authored and coauthored documents credited
+to that author; the passage still carries the complete author tuple.
+Comparison scope is intentionally stricter: retained evidence and final
+citations must cover each selected author. Missing coverage produces a typed
+`scope_incomplete` abstention before unsupported comparison prose can become an
+answer. Native metadata filters constrain dense, lexical, and fused retrieval
+before ranking, and a defensive post-retrieval check rejects any passage that
+does not carry an in-scope author credit. This provides hard exclusion rather
+than an exhaustive semantic-recall guarantee.
 
 The three routes have deliberately different coverage contracts:
 
@@ -509,8 +526,9 @@ always cite retrieved source passages.
    retrieval or an LLM.
 2. Unknown or ambiguous authors and document types stop for clarification; they
    never silently become zero, a default author, or an unfiltered corpus query.
-3. A unique first or last name may resolve to one catalog author. A shared alias
-   remains ambiguous.
+3. Exact catalog names and explicitly configured aliases may resolve an author.
+   Semantic execution does not guess partial names; conflicting query and UI
+   scopes stop.
 4. Semantic results always report `exhaustive=False`.
 5. Generation uses the exact passages already returned for inspection.
 6. Factual answer paragraphs require valid numbered evidence markers.
@@ -546,6 +564,9 @@ always cite retrieved source passages.
 21. Citation repair is bounded to one retry. A second citation-format failure
     returns a visible abstention and persists the private raw attempts and
     timing; failed draft prose never enters claim extraction as an answer.
+22. Dense, BM25, and fused results apply the same hard author-credit filter.
+    Comparison generation requires retained and cited coverage for every
+    selected author.
 
 ## Component map
 

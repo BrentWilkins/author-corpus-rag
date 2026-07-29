@@ -11,6 +11,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from author_corpus.retrieval import RetrievedPassage, SemanticCorpusSearch
+from author_corpus.scope import AuthorScope
 
 
 class RelevantPassage(BaseModel):
@@ -35,6 +36,7 @@ class RetrievalCase(BaseModel):
     relevant_document_ids: tuple[str, ...] = Field(min_length=1)
     relevant_passages: tuple[RelevantPassage, ...] = ()
     minimum_document_author_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    author_scope: AuthorScope = Field(default_factory=AuthorScope)
 
     @model_validator(mode="after")
     def validate_passage_documents(self) -> RetrievalCase:
@@ -55,6 +57,7 @@ class RetrievalCaseResult(BaseModel):
     query: str
     retrieved_document_ids: tuple[str, ...]
     relevant_document_ids: tuple[str, ...]
+    author_scope: AuthorScope = Field(default_factory=AuthorScope)
     first_relevant_rank: int | None
     normalized_discounted_cumulative_gain: float = Field(ge=0.0, le=1.0)
     has_passage_expectations: bool = False
@@ -185,6 +188,7 @@ def evaluate_retrieval(
             retrieval_query,
             limit=top_k,
             minimum_document_author_fraction=case.minimum_document_author_fraction,
+            author_scope=case.author_scope,
         )
         retrieved_ids = tuple(passage.document_id for passage in search_result.passages)
         relevant_ids = set(case.relevant_document_ids)
@@ -208,6 +212,7 @@ def evaluate_retrieval(
                 query=case.query,
                 retrieved_document_ids=retrieved_ids,
                 relevant_document_ids=case.relevant_document_ids,
+                author_scope=case.author_scope,
                 first_relevant_rank=first_relevant_rank,
                 normalized_discounted_cumulative_gain=_binary_ndcg(
                     document_relevance,
