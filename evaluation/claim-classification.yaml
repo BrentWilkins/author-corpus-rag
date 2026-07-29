@@ -41,6 +41,12 @@ cases:
     evidence: The south gate is not open overnight.
     expected_label: contradicts
 
+  - name: curly-negation-conflict
+    category: disagreement
+    claim: The south gate is open overnight.
+    evidence: The south gate isn’t open overnight.
+    expected_label: contradicts
+
   - name: explicit-opposition
     category: disagreement
     claim: The policy applies on weekends.
@@ -69,6 +75,12 @@ cases:
     category: changing_fact
     claim: The route closes during extreme heat.
     evidence: After a later inspection, the route closes during extreme heat.
+    expected_label: updates
+
+  - name: recent-change-with-quoted-term
+    category: changing_fact
+    claim: The committee uses a free-choice policy.
+    evidence: More recently, the committee moved away from its “free-choice” policy.
     expected_label: updates
 
   - name: dated-price-change
@@ -132,6 +144,12 @@ cases:
     category: unsupported
     claim: The annual entry fee increased to forty dollars.
     evidence: The fee schedule was published yesterday.
+    expected_label: insufficient
+
+  - name: explicit-insufficiency
+    category: unsupported
+    claim: Students choose the program primarily because of its curriculum.
+    evidence: There is no clear evidence why students choose one program over another.
     expected_label: insufficient
 
   - name: unrelated-opposition-marker

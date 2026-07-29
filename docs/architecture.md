@@ -295,8 +295,10 @@ the same local trace store.
 ```mermaid
 flowchart LR
     public_cases[Committed synthetic<br/>claim/evidence labels]
-    private_cases[Ignored private<br/>real-world labels]
+    private_cases[Ignored private<br/>real-world labels + spans]
+    corpus[Current normalized<br/>corpus documents]
     validation[Typed case validation]
+    provenance[Exact-span provenance<br/>validation]
     classifier[Conservative heuristic<br/>classifier]
     signals[Inspectable overlap, negation,<br/>markers, and voice signals]
     abstention[Explicit uncertain<br/>abstention]
@@ -306,7 +308,9 @@ flowchart LR
 
     public_cases --> validation
     private_cases --> validation
-    validation --> classifier
+    validation --> provenance
+    corpus --> provenance
+    provenance --> classifier
     classifier --> signals
     classifier --> abstention
     signals --> metrics
@@ -321,8 +325,10 @@ It emits deterministic signals and a rationale, not a confidence score. The
 benchmark is an offline regression harness: predictions never promote a claim
 to audited truth or enter generation automatically. Committed cases are
 synthetic; ignored local cases are required before drawing conclusions about a
-private corpus. The committed set deliberately retains a known entity-role
-reversal miss, making the current false-support failure measurable.
+private corpus. Provenance-bearing cases must still resolve to the same
+versioned source text; stale labels stop notebook evaluation instead of silently
+testing a different passage. The committed set deliberately retains a known
+entity-role reversal miss, making the current false-support failure measurable.
 
 ## Cache and rebuild boundaries
 

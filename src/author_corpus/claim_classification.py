@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from time import perf_counter
 from typing import Literal, Protocol
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from author_corpus.audit import EvidenceSpan, EvidenceValidationIssue, validate_evidence_spans
+from author_corpus.models import CorpusDocument
 
 ClaimEvidenceLabel = Literal[
     "supports",
@@ -112,6 +116,7 @@ _UPDATE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("no_longer", re.compile(r"\bno longer\b")),
     ("now", re.compile(r"\bnow\b")),
     ("previously", re.compile(r"\bpreviously\b")),
+    ("recently", re.compile(r"\brecently\b")),
     ("retracted", re.compile(r"\bretract(?:ed|ion)\b")),
     ("revised", re.compile(r"\brevis(?:ed|ion)\b")),
     ("updated", re.compile(r"\bupdat(?:ed|e|ing)\b")),
@@ -151,6 +156,14 @@ _ATTRIBUTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("says", re.compile(r"\bsays\b")),
     ("told", re.compile(r"\btold\b")),
 )
+_INSUFFICIENCY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("cannot_determine", re.compile(r"\bcannot determine\b")),
+    ("insufficient_evidence", re.compile(r"\binsufficient evidence\b")),
+    ("no_clear_evidence", re.compile(r"\bno clear evidence\b")),
+    ("not_established", re.compile(r"\bnot (?:been )?established\b")),
+    ("unclear_whether", re.compile(r"\bunclear whether\b")),
+    ("unknown_whether", re.compile(r"\bunknown whether\b")),
+)
 
 
 class ClaimEvidenceSignals(BaseModel):
@@ -170,6 +183,7 @@ class ClaimEvidenceSignals(BaseModel):
     contradiction_markers: tuple[str, ...] = ()
     qualification_markers: tuple[str, ...] = ()
     attribution_markers: tuple[str, ...] = ()
+    insufficiency_markers: tuple[str, ...] = ()
     evidence_voice: EvidenceVoice = "unknown"
 
 
@@ -210,6 +224,14 @@ class ClaimClassificationCase(BaseModel):
     expected_label: ClaimEvidenceLabel
     evidence_voice: EvidenceVoice = "document_author"
     category: str = Field(min_length=1)
+    evidence_span: EvidenceSpan | None = None
+
+    @model_validator(mode="after")
+    def validate_evidence_span(self) -> ClaimClassificationCase:
+        """Require optional exact provenance to freeze this case's evidence text."""
+        if self.evidence_span is not None and self.evidence_span.text != self.evidence:
+            raise ValueError("Claim-classification evidence must exactly equal its evidence span text.")
+        return self
 
 
 class ClaimClassificationCaseResult(BaseModel):
@@ -221,6 +243,7 @@ class ClaimClassificationCaseResult(BaseModel):
     category: str
     expected_label: ClaimEvidenceLabel
     decision: ClaimEvidenceDecision
+    evidence_span_id: str | None = None
 
     @property
     def correct(self) -> bool:
@@ -273,6 +296,11 @@ class ClaimClassificationEvaluation(BaseModel):
         return sum(case.decision.label == "supports" for case in non_support) / len(non_support)
 
     @property
+    def provenance_coverage(self) -> float:
+        """Return the fraction of labels tied to exact versioned source spans."""
+        return 0.0 if not self.cases else sum(case.evidence_span_id is not None for case in self.cases) / len(self.cases)
+
+    @property
     def mistakes(self) -> tuple[ClaimClassificationCaseResult, ...]:
         """Return all classification errors for inspection."""
         return tuple(case for case in self.cases if not case.correct)
@@ -308,7 +336,8 @@ def classify_claim_evidence(
     contradiction_markers = _markers(normalized_evidence, _CONTRADICTION_PATTERNS)
     qualification_markers = _markers(normalized_evidence, _QUALIFICATION_PATTERNS)
     attribution_markers = _markers(normalized_evidence, _ATTRIBUTION_PATTERNS)
-    if _DIRECT_QUOTE_PATTERN.search(normalized_evidence):
+    insufficiency_markers = _markers(normalized_evidence, _INSUFFICIENCY_PATTERNS)
+    if evidence_voice != "document_author" and _DIRECT_QUOTE_PATTERN.search(normalized_evidence):
         attribution_markers = (*attribution_markers, "direct_quote")
     signals = ClaimEvidenceSignals(
         claim_terms=claim_terms,
@@ -323,6 +352,7 @@ def classify_claim_evidence(
         contradiction_markers=contradiction_markers,
         qualification_markers=qualification_markers,
         attribution_markers=attribution_markers,
+        insufficiency_markers=insufficiency_markers,
         evidence_voice=evidence_voice,
     )
 
@@ -332,6 +362,14 @@ def classify_claim_evidence(
             normalized_evidence,
             "insufficient",
             "The evidence does not share enough substantive claim terms to assign a relationship.",
+            signals,
+        )
+    if insufficiency_markers:
+        return _decision(
+            normalized_claim,
+            normalized_evidence,
+            "insufficient",
+            "The passage explicitly says the asserted relationship is unknown or lacks evidence.",
             signals,
         )
     if evidence_voice == "quoted_speech" or attribution_markers:
@@ -425,6 +463,7 @@ def evaluate_claim_classifier(
             name=case.name,
             category=case.category,
             expected_label=case.expected_label,
+            evidence_span_id=case.evidence_span.span_id if case.evidence_span is not None else None,
             decision=classifier(
                 case.claim,
                 case.evidence,
@@ -439,6 +478,15 @@ def evaluate_claim_classifier(
         label_metrics=metrics,
         elapsed_seconds=perf_counter() - started,
     )
+
+
+def validate_claim_classification_sources(
+    cases: tuple[ClaimClassificationCase, ...],
+    documents: Mapping[str, CorpusDocument],
+) -> tuple[EvidenceValidationIssue, ...]:
+    """Validate every provenance-bearing case against the current corpus."""
+    spans = tuple(case.evidence_span for case in cases if case.evidence_span is not None)
+    return validate_evidence_spans(spans, documents)
 
 
 def _decision(
@@ -465,7 +513,7 @@ def _required_text(value: str, *, name: str) -> str:
 
 
 def _content_terms(text: str) -> tuple[str, ...]:
-    normalized = text.casefold().replace("n't", " not")
+    normalized = text.casefold().replace("n't", " not").replace("n’t", " not")
     return tuple(_stem(token) for token in _WORD_PATTERN.findall(normalized) if token not in _STOPWORDS)
 
 

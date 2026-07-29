@@ -264,9 +264,12 @@ false-support rate alongside accuracy. The committed
 `evaluation/claim-classification.yaml` file is a synthetic regression baseline,
 not evidence of general semantic-entailment accuracy. Set
 `AUTHOR_CORPUS_CLAIM_EVAL` to an ignored local file to measure real corrections
-and disagreements without publishing them. The baseline intentionally retains
-an entity-role-reversal case that the lexical heuristic currently misclassifies,
-so its false-support limitation remains visible instead of being tuned out.
+and disagreements without publishing them. Private cases may include an exact
+`EvidenceSpan`; the notebook then verifies the document hash, character range,
+text, and text hash against the current corpus before reporting metrics. The
+baseline intentionally retains an entity-role-reversal case that the lexical
+heuristic currently misclassifies, so its false-support limitation remains
+visible instead of being tuned out.
 
 Classifier predictions do not update `AuditedClaim.status` automatically.
 Automatic claim extraction, semantic entailment, and human acceptance workflows

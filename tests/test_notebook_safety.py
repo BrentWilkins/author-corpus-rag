@@ -64,6 +64,8 @@ def test_notebook_measures_claim_classification_without_mutating_audits() -> Non
     assert "claim-classification.yaml" in notebook_text
     assert "evaluate_claim_classifier(" in notebook_text
     assert "claim false-support rate:" in notebook_text
+    assert "validate_claim_classification_sources(" in notebook_text
+    assert "claim provenance coverage:" in notebook_text
     assert "AuditedClaim(" not in notebook_text
 
 

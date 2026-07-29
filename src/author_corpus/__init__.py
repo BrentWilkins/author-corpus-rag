@@ -25,6 +25,7 @@ from author_corpus.claim_classification import (
     classify_claim_evidence,
     evaluate_claim_classifier,
     load_claim_classification_cases,
+    validate_claim_classification_sources,
 )
 from author_corpus.conversation import (
     ConversationMessage,
@@ -234,4 +235,5 @@ __all__ = [
     "resolve_author_query",
     "resolve_conversation_query",
     "validate_evidence_spans",
+    "validate_claim_classification_sources",
 ]

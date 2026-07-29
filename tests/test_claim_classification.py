@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from author_corpus.audit import EvidenceSpan
 from author_corpus.claim_classification import (
     ClaimClassificationCase,
     ClaimEvidenceDecision,
@@ -12,7 +13,9 @@ from author_corpus.claim_classification import (
     classify_claim_evidence,
     evaluate_claim_classifier,
     load_claim_classification_cases,
+    validate_claim_classification_sources,
 )
+from author_corpus.ingestion import load_corpus
 
 EVALUATION_PATH = Path(__file__).parents[1] / "evaluation" / "claim-classification.yaml"
 
@@ -23,7 +26,7 @@ def test_committed_adversarial_claim_regressions() -> None:
 
     evaluation = evaluate_claim_classifier(cases)
 
-    assert len(cases) == 26
+    assert len(cases) == 29
     assert evaluation.accuracy >= 0.9
     assert evaluation.coverage < 1.0
     assert evaluation.selective_accuracy is not None
@@ -67,6 +70,43 @@ def test_negation_mismatch_is_an_inspectable_contradiction() -> None:
     assert decision.label == "contradicts"
     assert decision.signals.negation_mismatch is True
     assert decision.signals.claim_term_coverage == 1.0
+
+
+def test_curly_apostrophe_negation_is_an_inspectable_contradiction() -> None:
+    """Normalize typographic contractions before extracting negation signals."""
+    decision = classify_claim_evidence(
+        "The gate is open overnight.",
+        "The gate isn’t open overnight.",
+        evidence_voice="document_author",
+    )
+
+    assert decision.label == "contradicts"
+    assert decision.signals.negation_mismatch is True
+
+
+def test_quoted_terminology_is_not_treated_as_spoken_attribution() -> None:
+    """Do not mistake typographic emphasis inside author narration for speech."""
+    decision = classify_claim_evidence(
+        "The committee uses a free-choice policy.",
+        "More recently, the committee moved away from its “free-choice” policy.",
+        evidence_voice="document_author",
+    )
+
+    assert decision.label == "updates"
+    assert decision.signals.update_markers == ("recently",)
+    assert decision.signals.attribution_markers == ()
+
+
+def test_explicit_lack_of_evidence_blocks_positive_support() -> None:
+    """Honor an explicit insufficiency statement even with strong term overlap."""
+    decision = classify_claim_evidence(
+        "Students choose the program because of its curriculum.",
+        "There is no clear evidence that students choose the program because of its curriculum.",
+        evidence_voice="document_author",
+    )
+
+    assert decision.label == "insufficient"
+    assert decision.signals.insufficiency_markers == ("no_clear_evidence",)
 
 
 def test_incompatible_quantities_are_not_supported_by_high_overlap() -> None:
@@ -153,3 +193,47 @@ cases:
 
     with pytest.raises(ValidationError):
         load_claim_classification_cases(path)
+
+
+def test_private_case_provenance_validates_against_current_source(tmp_path: Path) -> None:
+    """Tie a real-world label to one exact document version and character range."""
+    source_path = tmp_path / "article.md"
+    source_path.write_text("The bridge closes only during extreme heat.", encoding="utf-8")
+    document = load_corpus([source_path]).documents[0]
+    span = EvidenceSpan.from_document(document, "The bridge closes only during extreme heat.")
+    case = ClaimClassificationCase(
+        name="versioned-qualification",
+        category="qualification",
+        claim="The bridge closes.",
+        evidence=span.text,
+        evidence_span=span,
+        expected_label="qualifies",
+    )
+
+    evaluation = evaluate_claim_classifier((case,))
+
+    assert evaluation.provenance_coverage == 1.0
+    assert evaluation.cases[0].evidence_span_id == span.span_id
+    assert validate_claim_classification_sources((case,), {document.document_id: document}) == ()
+
+    changed = document.model_copy(update={"content_hash": "changed"})
+    issues = validate_claim_classification_sources((case,), {document.document_id: changed})
+    assert issues[0].code == "document_changed"
+
+
+def test_case_rejects_evidence_that_differs_from_its_exact_span(tmp_path: Path) -> None:
+    """Prevent labels from drifting away from their frozen source evidence."""
+    source_path = tmp_path / "article.md"
+    source_path.write_text("Exact evidence.", encoding="utf-8")
+    document = load_corpus([source_path]).documents[0]
+    span = EvidenceSpan.from_document(document, "Exact evidence.")
+
+    with pytest.raises(ValidationError, match="exactly equal"):
+        ClaimClassificationCase(
+            name="drifted",
+            category="support",
+            claim="A claim.",
+            evidence="Edited evidence.",
+            evidence_span=span,
+            expected_label="supports",
+        )
