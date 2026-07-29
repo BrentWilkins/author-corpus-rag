@@ -18,11 +18,12 @@ committed code:
 The current milestones provide normalized Markdown, text, and PDF ingestion,
 validation, an exact SQLite catalog, persistent dense and BM25 retrieval,
 inspectable reciprocal-rank fusion, citation-constrained grounded answers,
-repeatable document- and passage-level retrieval evaluation, structure-aware
-Markdown chunks, conservative quotation provenance, durable query traces, and
-initial exact-span evidence-ledger models. Per-document summaries are treated
-as experimental navigation aids. Corpus-wide synthesis is paused until its
-claims can be audited against raw source spans.
+repeatable document- and passage-level retrieval evaluation, deterministic
+query routing with a labeled benchmark, structure-aware Markdown chunks,
+conservative quotation provenance, durable query traces, and initial exact-span
+evidence-ledger models. Per-document summaries are treated as experimental
+navigation aids. Corpus-wide synthesis is paused until its claims can be
+audited against raw source spans.
 
 ## Setup
 
@@ -96,11 +97,25 @@ interactive notebook is normally configured to allow them.
 
 Use the SQLite catalog for exact counts, complete lists, authorship, and source
 inventory. Use dense discovery for broad subject exploration and hybrid focused
-evidence for answer generation. Retrieval deliberately reports
-`exhaustive=False` and returns its passage text and source URIs so retrieval can
-be inspected before an LLM writes an answer. Grounded answers retain the exact
-evidence supplied to the model and render only the sources the answer cites as
-clickable links. Each generated answer is also saved to the ignored
+evidence for answer generation. `route_query` makes that decision with
+inspectable deterministic rules. It reports a route, matching rule, literal
+signals, rationale, and exact catalog tool where applicable; it deliberately
+does not report an uncalibrated confidence score. Unmatched questions take the
+focused-evidence path, which is the conservative source-grounded default.
+
+Questions such as “how many articles discuss a topic?” cannot be answered
+exhaustively by the metadata catalog. The router sends them to broad discovery
+and preserves the non-exhaustive warning instead of fabricating a total.
+Similarly, the notebook stops exact metadata questions before vector retrieval
+or model generation and identifies the catalog tool that needs validated
+arguments. Argument extraction remains a separate boundary rather than being
+guessed by routing rules.
+
+Semantic retrieval deliberately reports `exhaustive=False` and returns its
+passage text and source URIs so retrieval can be inspected before an LLM writes
+an answer. Grounded answers retain the exact evidence supplied to the model and
+render only the sources the answer cites as clickable links. Each generated
+answer is also saved to the ignored
 `.cache/query_traces.sqlite3` database with its retrieved passage text, passage
 hashes, document content hashes, model and prompt settings, corpus fingerprint,
 citations, retrieval strategy, score semantics, component ranks and scores, and
@@ -111,6 +126,15 @@ Dense cosine similarity, BM25 relevance, and reciprocal-rank-fusion values are
 different score types. They must not be compared as if they shared a confidence
 scale. Fusion combines ranks rather than adding incomparable raw scores, and
 each result preserves the contributing dense and lexical ranks for inspection.
+
+The committed `evaluation/query-routing.yaml` benchmark labels exact catalog,
+broad discovery, and focused evidence questions, including the expected exact
+tool. The notebook reports overall route accuracy, per-route precision and
+recall, exact-tool accuracy, mistakes, and elapsed time. Set
+`AUTHOR_CORPUS_ROUTING_EVAL` to an ignored `*.local.yaml` file to evaluate
+private, real-world wording. The committed set is a small regression baseline,
+not evidence that the rules generalize to every question; add real misses before
+considering a learned classifier.
 
 Keep corpus-specific retrieval cases in the ignored `retrieval-eval.local.yaml`.
 Each case maps a natural-language query to one or more known relevant logical

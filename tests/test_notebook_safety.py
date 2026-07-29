@@ -23,9 +23,23 @@ def test_notebook_cannot_resume_broad_synthesis() -> None:
 
 
 def test_notebook_uses_separate_discovery_and_grounded_evidence_profiles() -> None:
-    """Keep broad browsing diverse while grounded answers gather deeper evidence."""
+    """Select diverse discovery or deeper evidence from an inspectable route."""
     notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
 
     assert "discovery_search = retrieval_profiles.discovery" in notebook_text
     assert "evidence_search = retrieval_profiles.hybrid_evidence" in notebook_text
-    assert "evidence_limit=6" in notebook_text
+    assert "route_decision = route_query(semantic_query)" in notebook_text
+    assert (
+        "selected_search = discovery_search if route_decision.route is QueryRoute.BROAD_DISCOVERY else evidence_search"
+        in notebook_text
+    )
+    assert "evidence_limit=selected_search.default_limit" in notebook_text
+
+
+def test_notebook_does_not_send_exact_catalog_questions_to_semantic_search() -> None:
+    """Stop exact metadata questions before non-exhaustive retrieval or generation."""
+    notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
+
+    assert "if route_decision.route is QueryRoute.EXACT_CATALOG" in notebook_text
+    assert "No semantic search was run" in notebook_text
+    assert "Grounded generation skipped because this question belongs to the exact catalog" in notebook_text

@@ -1,0 +1,96 @@
+cases:
+  - name: exact-document-count
+    query: How many articles has Avery Stone written here?
+    expected_route: exact_catalog
+    expected_catalog_tool: count_corpus_documents
+
+  - name: exact-total-works
+    query: What is the total number of works in this corpus?
+    expected_route: exact_catalog
+    expected_catalog_tool: count_corpus_documents
+
+  - name: exact-list-authors
+    query: Who are all of the authors represented here?
+    expected_route: exact_catalog
+    expected_catalog_tool: list_corpus_authors
+
+  - name: exact-other-writers
+    query: List every other writer in the collection.
+    expected_route: exact_catalog
+    expected_catalog_tool: list_corpus_authors
+
+  - name: exact-coauthors
+    query: Who are Avery Stone's coauthors?
+    expected_route: exact_catalog
+    expected_catalog_tool: list_author_coauthors
+
+  - name: exact-authorship-breakdown
+    query: Show the sole-authored and coauthored writing credits.
+    expected_route: exact_catalog
+    expected_catalog_tool: get_author_document_stats
+
+  - name: exact-list-documents
+    query: List all papers in the corpus.
+    expected_route: exact_catalog
+    expected_catalog_tool: list_corpus_documents
+
+  - name: exact-source-inventory
+    query: Give me the complete source URL inventory.
+    expected_route: exact_catalog
+    expected_catalog_tool: list_corpus_documents
+
+  - name: broad-corpus-overview
+    query: Give me an overview of the author's writing collection.
+    expected_route: broad_discovery
+
+  - name: broad-topics
+    query: What topics recur in these articles?
+    expected_route: broad_discovery
+
+  - name: broad-style
+    query: What patterns across the corpus characterize the author's writing style?
+    expected_route: broad_discovery
+
+  - name: broad-author-coverage
+    query: What does the author write about?
+    expected_route: broad_discovery
+
+  - name: broad-advice
+    query: What practical advice does the author give readers?
+    expected_route: broad_discovery
+
+  - name: broad-examples
+    query: Show me several articles that are good examples of explanatory writing.
+    expected_route: broad_discovery
+
+  - name: broad-content-list-limit
+    query: Which articles discuss injury prevention?
+    expected_route: broad_discovery
+
+  - name: broad-content-count-limit
+    query: How many posts mention altitude training?
+    expected_route: broad_discovery
+
+  - name: focused-mechanism
+    query: How does heat acclimation change plasma volume?
+    expected_route: focused_evidence
+
+  - name: focused-recommendation
+    query: What does the author recommend doing before a technical descent?
+    expected_route: focused_evidence
+
+  - name: focused-comparison
+    query: Compare the explanations for early and late race cramping.
+    expected_route: focused_evidence
+
+  - name: focused-quotation
+    query: Find the passage that explains the purpose of short hill repeats.
+    expected_route: focused_evidence
+
+  - name: focused-correction
+    query: Does a later passage correct the earlier claim about recovery time?
+    expected_route: focused_evidence
+
+  - name: focused-numeric-fact
+    query: What air quality threshold does the article recommend?
+    expected_route: focused_evidence
