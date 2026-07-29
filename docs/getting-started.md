@@ -98,8 +98,10 @@ Run the notebook headlessly without persisting private outputs:
 uv run python scripts/smoke_notebook.py
 ```
 
-The smoke runner forces model calls and missing-index builds off even if the
-interactive environment normally permits them.
+The smoke runner uses an isolated synthetic corpus and temporary cache, forces
+an exact catalog query, and skips the two cells that require an embedding model
+and vector index. It executes no model calls and does not read or persist
+private corpus output.
 
 ## Launch the local interface
 
