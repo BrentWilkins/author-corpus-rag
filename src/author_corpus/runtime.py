@@ -90,6 +90,7 @@ class QueryRuntime:
     layout: CacheLayout
     fingerprint: str
     review_workspace: ClaimReviewWorkspace | None
+    trace_store: QueryTraceStore
     timings: tuple[QueryTiming, ...]
 
     @property
@@ -161,6 +162,7 @@ def load_query_runtime(
     timings.append(_timing("retrieval profiles", profiles_started))
 
     complete = OpenAICompatibleCompleter(settings.model)
+    trace_store = QueryTraceStore(layout.query_trace_path)
     service = CorpusQueryService(
         catalog,
         retrieval_profiles,
@@ -170,7 +172,7 @@ def load_query_runtime(
         author_aliases=settings.author_aliases,
         minimum_document_author_fraction=0.8,
         trace_context=QueryTraceContext(
-            store=QueryTraceStore(layout.query_trace_path),
+            store=trace_store,
             corpus_fingerprint=fingerprint,
             document_content_hashes={document.document_id: document.content_hash for document in documents},
             generation_settings=settings.model,
@@ -191,6 +193,7 @@ def load_query_runtime(
         layout=layout,
         fingerprint=fingerprint,
         review_workspace=review_workspace,
+        trace_store=trace_store,
         timings=tuple(timings),
     )
 

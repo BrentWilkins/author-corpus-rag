@@ -27,6 +27,12 @@ from author_corpus.claim_classification import (
     load_claim_classification_cases,
     validate_claim_classification_sources,
 )
+from author_corpus.claim_extraction import (
+    AnswerClaimCandidate,
+    AnswerClaimExtraction,
+    ClaimEvidenceAssessment,
+    extract_answer_claims,
+)
 from author_corpus.conversation import (
     ConversationMessage,
     ConversationResolution,
@@ -136,6 +142,8 @@ from author_corpus.workflow import NotebookRunOptions
 
 __all__ = [
     "AuditedClaim",
+    "AnswerClaimCandidate",
+    "AnswerClaimExtraction",
     "AuthorDocumentStats",
     "AuthorIdentity",
     "AuthorQueryResolution",
@@ -155,6 +163,7 @@ __all__ = [
     "ClaimClassificationEvaluation",
     "ClaimClassifier",
     "ClaimEvidenceDecision",
+    "ClaimEvidenceAssessment",
     "ClaimEvidenceLabel",
     "ClaimEvidenceSignals",
     "ClaimLabelMetrics",
@@ -239,6 +248,7 @@ __all__ = [
     "evaluate_retrieval_strategies",
     "evaluate_query_router",
     "execute_catalog_query",
+    "extract_answer_claims",
     "bm25_index_exists",
     "load_corpus",
     "load_corpus_config",

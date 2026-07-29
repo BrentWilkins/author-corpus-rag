@@ -8,12 +8,19 @@ import pytest
 
 from author_corpus.audit import EvidenceSpan
 from author_corpus.claim_classification import classify_claim_evidence
+from author_corpus.claim_extraction import (
+    AnswerClaimCandidate,
+    AnswerClaimExtraction,
+    ClaimEvidenceAssessment,
+)
 from author_corpus.ingestion import load_corpus
 from author_corpus.persistence import corpus_fingerprint
 from author_corpus.review import ClaimReviewProposal, ClaimReviewStore, ClaimReviewWorkspace
 from author_corpus.service import CorpusQueryService
+from author_corpus.tracing import QueryTraceStore
 from author_corpus.ui import (
     _user_history,
+    answer_claim_extraction_markdown,
     build_chat_interface,
     build_corpus_interface,
     claim_review_choices,
@@ -32,6 +39,8 @@ def test_builds_gradio_chat_without_starting_a_server() -> None:
     assert interface.title == "Synthetic Corpus explorer"
     assert interface.analytics_enabled is False
     assert interface.save_history is False
+    assert interface.chatbot.height == "72vh"
+    assert interface.chatbot.min_height == 480
 
 
 def test_gradio_history_keeps_user_text_and_discards_assistant_output() -> None:
@@ -57,10 +66,12 @@ def test_builds_combined_chat_and_review_interface(tmp_path: Path) -> None:
         service,
         corpus_name="Synthetic Corpus",
         review_workspace=workspace,
+        trace_store=QueryTraceStore(tmp_path / "missing-traces.sqlite3"),
     )
 
     assert isinstance(interface, gr.Blocks)
     assert interface.title == "Synthetic Corpus explorer"
+    assert "Generated claims — read only" in str(interface.get_config_file())
 
 
 def test_review_form_shows_exact_evidence_and_stable_proposal_value(tmp_path: Path) -> None:
@@ -122,6 +133,33 @@ def test_review_submission_can_revise_with_explicit_qualifier(tmp_path: Path) ->
 
     assert review.audited_claim is not None
     assert review.audited_claim.qualifiers == ("Only above the posted threshold.",)
+
+
+def test_generated_claim_report_is_explicitly_read_only_and_unversioned() -> None:
+    """Show legacy extraction gaps without offering a review action."""
+    extraction = AnswerClaimExtraction(
+        trace_id="legacy-trace",
+        query="What changed?",
+        candidates=(
+            AnswerClaimCandidate(
+                candidate_id="candidate",
+                trace_id="legacy-trace",
+                ordinal=1,
+                statement="The bridge closes during extreme heat.",
+                citation_numbers=(1,),
+                evidence=(ClaimEvidenceAssessment(evidence_number=1, title="Synthetic article"),),
+            ),
+        ),
+        uncited_segments=("Based on the evidence:",),
+    )
+
+    report = answer_claim_extraction_markdown(extraction)
+
+    assert "Read-only generated-answer claim preview" in report
+    assert "Exact-span coverage:** 0/1" in report
+    assert "`unversioned`" in report
+    assert "does not create a proposal, review record, or audited claim" in report
+    assert "Uncited generated segments" in report
 
 
 def _review_workspace(tmp_path: Path, *, qualified: bool = False) -> ClaimReviewWorkspace:

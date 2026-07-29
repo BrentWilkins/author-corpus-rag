@@ -372,6 +372,34 @@ cross-corpus evidence or evidence that was not available in the proposal.
 Qualification suggestions require revision because a scope marker alone does
 not provide a reviewer-authored qualifier.
 
+## Level 7: read-only generated-answer claim extraction
+
+```mermaid
+flowchart LR
+    traces[(Generated-answer traces)]
+    parser[Deterministic sentence +<br/>citation parser]
+    candidates[Citation-bound<br/>claim candidates]
+    resolver{Every citation has<br/>an exact span?}
+    exact[Source-bound candidate]
+    legacy[Explicitly unversioned<br/>legacy candidate]
+    heuristic[Per-evidence heuristic<br/>claim classification]
+    preview[Read-only Gradio preview]
+    queue[Durable review queue]
+
+    traces --> parser --> candidates --> resolver
+    resolver -->|yes| exact --> heuristic --> preview
+    resolver -->|no| legacy --> preview
+    preview -. no automatic promotion .-> queue
+```
+
+The extractor removes citation markers from display text while preserving their
+numbers and order, separates cited sentences from uncited generated prose, and
+resolves each marker through the trace to an optional exact `EvidenceSpan`.
+Legacy traces remain unversioned. Exact spans may receive the existing
+inspectable lexical classifier label, but large cited passages can make those
+labels noisy; they are display-only and do not determine review eligibility.
+The UI has no action that converts an extracted candidate into a proposal.
+
 ## Cache and rebuild boundaries
 
 | Artifact | Persistence | Rebuild trigger | Role |
@@ -411,7 +439,9 @@ always cite retrieved source passages.
     uncertainty and attributed reports remain distinct from support.
 13. Only an explicit identified reviewer can create an applicable review record;
     rejected reviews and cross-corpus proposals cannot update a ledger.
-14. Private corpus configuration, evaluation labels, caches, and notebook output
+14. Generated-answer claim extraction is read-only; unversioned candidates and
+    heuristic labels never enter the durable review queue automatically.
+15. Private corpus configuration, evaluation labels, caches, and notebook output
     stay outside version control.
 
 ## Component map
@@ -433,5 +463,6 @@ always cite retrieved source passages.
 | Citation-constrained generation | `src/author_corpus/answering.py` |
 | Exact evidence spans and answer audit trail | `src/author_corpus/audit.py`, `tracing.py` |
 | Offline claim/evidence classification | `src/author_corpus/claim_classification.py` |
+| Read-only generated claim extraction | `src/author_corpus/claim_extraction.py` |
 | Explicit human claim review | `src/author_corpus/review.py` |
 | Notebook and maintenance entry points | `notebooks/`, `src/author_corpus/cli.py` |

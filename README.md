@@ -32,6 +32,9 @@ discovery, and focused-evidence boundaries across bounded conversational turns,
 and an optional local Gradio interface uses that same service. Its separate
 claim-review tab exposes source-bound proposals and append-only accept, revise,
 and reject records without automatically changing an answer ledger.
+The same local interface provides a read-only preview that deterministically
+extracts citation-bound sentences from historical generated answers, distinguishes
+exact-span traces from legacy unversioned traces, and takes no review action.
 Per-document summaries are treated as experimental navigation aids.
 Corpus-wide synthesis is paused until its claims can be audited against raw
 source spans.
@@ -98,7 +101,10 @@ question and never feeds a generated assistant answer back as evidence. When
 review tab shows their exact passages and stable proposals. Every durable action
 requires a reviewer name. Accept preserves the proposal, revise exposes the
 resolved statement, status, attribution, and qualifiers, and reject creates no
-audited claim. Repeated actions on the same proposal are refused.
+audited claim. Repeated actions on the same proposal are refused. A second,
+read-only subtab inspects generated-answer traces: it lists cited candidate
+sentences, uncited prose, exact-span coverage, and per-evidence heuristic labels
+without creating proposals or changing either audit database.
 
 The command separately times corpus loading, structure/voice-aware chunking,
 embedding-model loading, embedding/index construction, persistence, and the
@@ -297,10 +303,11 @@ ledger.
 Only the conservative `supports`, `contradicts`, and `insufficient` mappings can
 be accepted unchanged. `qualifies` requires a reviewer-authored qualifier;
 `updates`, `attributed_report`, and `uncertain` also require a revised claim
-because they do not determine a safe final status by themselves. Automatic
-answer-claim extraction remains future work; the local review UI currently
-surfaces configured provenance-bearing evaluation cases. Classifier output is
-still a heuristic rather than proof.
+because they do not determine a safe final status by themselves. The local
+review UI surfaces configured provenance-bearing evaluation cases, and
+generated answers have a separate read-only claim preview. Admitting any
+extracted candidate into the durable review queue remains future work.
+Classifier output is still a heuristic rather than proof.
 
 ## Privacy boundary
 

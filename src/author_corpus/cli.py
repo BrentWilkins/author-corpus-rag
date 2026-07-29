@@ -121,6 +121,7 @@ def _chat(
         runtime.service,
         corpus_name=runtime.corpus_name,
         review_workspace=runtime.review_workspace,
+        trace_store=runtime.trace_store,
         server_name=server_name,
         server_port=server_port,
         share=share,

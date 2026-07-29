@@ -8,6 +8,7 @@ from typing import cast
 import gradio as gr
 
 from author_corpus.audit import AuditedClaim
+from author_corpus.claim_extraction import AnswerClaimExtraction, extract_answer_claims
 from author_corpus.conversation import ConversationMessage, ConversationRole, ask_conversational
 from author_corpus.review import (
     ClaimReviewAction,
@@ -17,6 +18,7 @@ from author_corpus.review import (
     ResolvedClaimStatus,
 )
 from author_corpus.service import CorpusQueryService
+from author_corpus.tracing import QueryTraceStore
 
 _REVIEW_ACTION_CHOICES: tuple[tuple[str, str], ...] = (
     ("Accept unchanged", "accept"),
@@ -40,6 +42,7 @@ _REVIEW_STATUSES: dict[str, ResolvedClaimStatus] = {
     "contradicted": "contradicted",
     "unsupported": "unsupported",
 }
+_CHATBOT_HEIGHT = "72vh"
 
 
 def build_chat_interface(
@@ -54,6 +57,11 @@ def build_chat_interface(
 
     return gr.ChatInterface(
         fn=respond,
+        chatbot=gr.Chatbot(
+            height=_CHATBOT_HEIGHT,
+            min_height=480,
+            autoscroll=True,
+        ),
         title=f"{corpus_name} explorer",
         description=(
             "Exact metadata questions use the exhaustive catalog. Content questions use source-grounded retrieval. "
@@ -87,6 +95,7 @@ def build_corpus_interface(
     *,
     corpus_name: str = "Author Corpus",
     review_workspace: ClaimReviewWorkspace | None = None,
+    trace_store: QueryTraceStore | None = None,
 ) -> gr.Blocks:
     """Build local chat and explicit claim-review tabs."""
     with gr.Blocks(
@@ -97,7 +106,7 @@ def build_corpus_interface(
         with gr.Tab("Corpus chat"):
             build_chat_interface(service, corpus_name=corpus_name)
         with gr.Tab("Claim review"):
-            _render_claim_review_tab(review_workspace)
+            _render_claim_review_tab(review_workspace, trace_store)
     return cast(gr.Blocks, interface)
 
 
@@ -106,6 +115,7 @@ def launch_chat_interface(
     *,
     corpus_name: str,
     review_workspace: ClaimReviewWorkspace | None = None,
+    trace_store: QueryTraceStore | None = None,
     server_name: str = "127.0.0.1",
     server_port: int = 7860,
     share: bool = False,
@@ -116,6 +126,7 @@ def launch_chat_interface(
         service,
         corpus_name=corpus_name,
         review_workspace=review_workspace,
+        trace_store=trace_store,
     )
     interface.launch(
         server_name=server_name,
@@ -246,7 +257,78 @@ def recent_claim_reviews_markdown(workspace: ClaimReviewWorkspace, *, limit: int
     return "\n".join(lines)
 
 
-def _render_claim_review_tab(workspace: ClaimReviewWorkspace | None) -> None:
+def trace_claim_choices(store: QueryTraceStore, *, limit: int = 20) -> tuple[tuple[str, str], ...]:
+    """Return recent trace labels and stable IDs for read-only inspection."""
+    return tuple(
+        (
+            f"{trace.created_at.isoformat()} · {_truncate(trace.user_query or trace.query, length=90)}",
+            trace.trace_id,
+        )
+        for trace in store.recent(limit=limit)
+    )
+
+
+def trace_claim_report(store: QueryTraceStore, trace_id: str | None) -> str:
+    """Render extracted generated claims without creating review proposals."""
+    if not trace_id:
+        return "Select a generated-answer trace."
+    trace = store.get(trace_id)
+    if trace is None:
+        raise ValueError(f"Unknown query trace: {trace_id!r}.")
+    return answer_claim_extraction_markdown(extract_answer_claims(trace))
+
+
+def answer_claim_extraction_markdown(extraction: AnswerClaimExtraction) -> str:
+    """Render citation-bound candidates, provenance coverage, and uncited prose."""
+    covered, total = extraction.exact_span_coverage
+    lines = [
+        "### Read-only generated-answer claim preview",
+        "",
+        f"**Question:** {_escape_inline(extraction.query)}",
+        f"**Citation-bound candidates:** {total}",
+        f"**Exact-span coverage:** {covered}/{total}",
+        "",
+        "This preview does not create a proposal, review record, or audited claim.",
+    ]
+    if not extraction.candidates:
+        lines.extend(("", "No citation-bound candidate sentences were found."))
+    for candidate in extraction.candidates:
+        provenance = "source-bound" if candidate.is_source_bound else "unversioned"
+        lines.extend(
+            (
+                "",
+                f"#### Candidate {candidate.ordinal} · `{provenance}`",
+                "",
+                _indented_text(candidate.statement),
+                "",
+                f"Citations: {', '.join(f'[{number}]' for number in candidate.citation_numbers)}",
+            )
+        )
+        for assessment in candidate.evidence:
+            decision = assessment.classifier_decision
+            label = decision.label if decision is not None else "not classified: no exact span"
+            title = assessment.title or "unknown evidence"
+            lines.append(f"- [{assessment.evidence_number}] {_escape_inline(title)} · heuristic `{label}`")
+            if assessment.evidence_span is not None:
+                excerpt = _truncate(_normalize_display(assessment.evidence_span.text), length=420)
+                lines.extend(("", _indented_text(excerpt)))
+    if extraction.uncited_segments:
+        lines.extend(("", "### Uncited generated segments", ""))
+        lines.extend(f"- {_escape_inline(segment)}" for segment in extraction.uncited_segments)
+    return "\n".join(lines)
+
+
+def _render_claim_review_tab(
+    workspace: ClaimReviewWorkspace | None,
+    trace_store: QueryTraceStore | None,
+) -> None:
+    with gr.Tab("Configured proposals"):
+        _render_configured_review_queue(workspace)
+    with gr.Tab("Generated claims — read only"):
+        _render_generated_claim_preview(trace_store)
+
+
+def _render_configured_review_queue(workspace: ClaimReviewWorkspace | None) -> None:
     if workspace is None:
         gr.Markdown(
             "No review queue is configured. Set `AUTHOR_CORPUS_CLAIM_EVAL` to a provenance-bearing local evaluation file."
@@ -360,6 +442,37 @@ def _render_claim_review_tab(workspace: ClaimReviewWorkspace | None) -> None:
     )
 
 
+def _render_generated_claim_preview(store: QueryTraceStore | None) -> None:
+    if store is None:
+        gr.Markdown("No generated-answer trace store is configured.")
+        return
+    choices = trace_claim_choices(store)
+    if not choices:
+        gr.Markdown("No generated-answer traces have been recorded.")
+        return
+    initial_id = choices[0][1]
+    trace = gr.Dropdown(
+        choices=choices,
+        value=initial_id,
+        label="Generated-answer trace",
+        interactive=True,
+    )
+    report = gr.Markdown(trace_claim_report(store, initial_id))
+
+    def select(trace_id: str | None) -> str:
+        try:
+            return trace_claim_report(store, trace_id)
+        except ValueError as exc:
+            return f"**Trace not available:** {_escape_inline(str(exc))}"
+
+    trace.change(
+        fn=select,
+        inputs=trace,
+        outputs=report,
+        api_visibility="private",
+    )
+
+
 def _user_history(history: list[dict[str, object]]) -> tuple[ConversationMessage, ...]:
     messages: list[ConversationMessage] = []
     for raw_message in history:
@@ -410,3 +523,7 @@ def _escape_inline(value: str) -> str:
 
 def _indented_text(value: str) -> str:
     return "\n".join(f"    {line}" for line in value.splitlines()) or "    "
+
+
+def _normalize_display(value: str) -> str:
+    return " ".join(value.strip().split())
