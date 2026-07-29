@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
@@ -7,6 +7,9 @@ name = "author-corpus-rag"
 version = "0.1.0"
 description = "Source-agnostic ingestion and RAG analysis for an author's corpus"
 readme = "README.md"
+authors = [{ name = "Brent Wilkins" }]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
     "llama-index-core>=0.14.23",
@@ -20,10 +23,14 @@ dependencies = [
 [project.scripts]
 author-corpus = "author_corpus.cli:main"
 
+[project.urls]
+Repository = "https://github.com/BrentWilkins/author-corpus-rag"
+Issues = "https://github.com/BrentWilkins/author-corpus-rag/issues"
+
 [project.optional-dependencies]
 local = [
     "llama-index-embeddings-huggingface>=0.7.0",
-    "openai>=2.49",
+    "openai>=2.45",
     "torch>=2.9",
 ]
 ui = [
@@ -46,6 +53,15 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/author_corpus"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/README.md",
+]
+
+[tool.uv]
+exclude-newer = "2 weeks"
+
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
 
@@ -59,7 +75,10 @@ line-length = 130
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "D"]
+select = ["E", "F", "I", "UP", "B", "SIM", "D", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S108"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "pep257"

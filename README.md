@@ -170,3 +170,11 @@ Committed examples and tests use synthetic authors and documents. Local paths
 and corpus metadata live in ignored `*.local.yaml` or `.env` files. Source
 documents, generated indexes, traces, reviews, and private exports remain
 outside version control, and pre-commit strips notebook output.
+
+## License
+
+Copyright 2026 Brent Wilkins.
+
+The project code and documentation are available under the
+[Apache License 2.0](LICENSE). Corpus materials retain their original rights
+and are not covered by the project license.

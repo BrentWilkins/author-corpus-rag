@@ -153,25 +153,26 @@ class CorpusCatalog:
         document_type: str | None = None,
     ) -> int:
         """Count logical documents matching optional exact filters."""
-        joins = ""
-        clauses: list[str] = []
-        parameters: list[str] = []
-        if author is not None:
-            joins = "JOIN document_authors a ON a.document_id = d.document_id"
-            clauses.append("a.author_key = ?")
-            parameters.append(_author_key(author))
-        if document_type is not None:
-            clauses.append("d.document_type = ?")
-            parameters.append(document_type)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        query = f"""
-            SELECT COUNT(DISTINCT d.document_id)
-            FROM documents d
-            {joins}
-            {where}
-        """
+        author_key = _author_key(author) if author is not None else None
         with self._connect() as connection:
-            return _scalar(connection, query, tuple(parameters))
+            return _scalar(
+                connection,
+                """
+                SELECT COUNT(*)
+                FROM documents d
+                WHERE (? IS NULL OR d.document_type = ?)
+                  AND (
+                      ? IS NULL
+                      OR EXISTS (
+                          SELECT 1
+                          FROM document_authors filter_author
+                          WHERE filter_author.document_id = d.document_id
+                            AND filter_author.author_key = ?
+                      )
+                  )
+                """,
+                (document_type, document_type, author_key, author_key),
+            )
 
     def author_counts(self) -> list[tuple[str, int]]:
         """Return each author and their number of distinct documents."""
@@ -259,37 +260,28 @@ class CorpusCatalog:
         document_type: str | None = None,
     ) -> list[CatalogEntry]:
         """List logical documents matching optional exact filters."""
-        clauses: list[str] = []
-        parameters: list[str] = []
-        if author is not None:
-            clauses.append(
-                """
-                EXISTS (
-                    SELECT 1
-                    FROM document_authors filter_author
-                    WHERE filter_author.document_id = d.document_id
-                      AND filter_author.author_key = ?
-                )
-                """
-            )
-            parameters.append(_author_key(author))
-        if document_type is not None:
-            clauses.append("d.document_type = ?")
-            parameters.append(document_type)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-
+        author_key = _author_key(author) if author is not None else None
         with self._connect() as connection:
             rows = connection.execute(
-                f"""
+                """
                 SELECT d.document_id,
                        d.title,
                        d.published_at,
                        d.document_type
                 FROM documents d
-                {where}
+                WHERE (? IS NULL OR d.document_type = ?)
+                  AND (
+                      ? IS NULL
+                      OR EXISTS (
+                          SELECT 1
+                          FROM document_authors filter_author
+                          WHERE filter_author.document_id = d.document_id
+                            AND filter_author.author_key = ?
+                      )
+                  )
                 ORDER BY d.published_at, d.title
                 """,
-                tuple(parameters),
+                (document_type, document_type, author_key, author_key),
             ).fetchall()
             return [
                 CatalogEntry(
@@ -393,7 +385,7 @@ def _author_key(author: str) -> str:
 def _scalar(
     connection: sqlite3.Connection,
     query: str,
-    parameters: tuple[str, ...] = (),
+    parameters: tuple[str | None, ...] = (),
 ) -> int:
     row = connection.execute(query, parameters).fetchone()
     if row is None:
