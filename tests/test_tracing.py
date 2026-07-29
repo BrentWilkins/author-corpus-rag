@@ -90,6 +90,7 @@ def test_query_trace_round_trip_and_freshness(tmp_path: Path) -> None:
     assert restored == trace
     assert store.recent() == (trace,)
     assert trace.evidence[0].passage_text == "The route closes during extreme heat."
+    assert trace.evidence[0].authors == document.authors
     assert trace.evidence[0].section_path == ("Guide", "Closures")
     assert trace.evidence[0].passage_voice == "document_author"
     assert trace.evidence[0].uncertain_voice_fraction == 0.0
@@ -98,6 +99,7 @@ def test_query_trace_round_trip_and_freshness(tmp_path: Path) -> None:
     assert trace.retrieval.minimum_document_author_fraction == 0.8
     assert trace.retrieval.strategy == "hybrid_evidence"
     assert trace.user_query is None
+    assert trace.author_scope.kind == "corpus"
     assert len(trace.evidence[0].passage_hash) == 64
     assert trace.evidence[0].evidence_span_id == evidence_span.span_id
     assert trace.evidence_spans == (evidence_span,)

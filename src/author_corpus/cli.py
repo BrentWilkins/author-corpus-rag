@@ -10,6 +10,7 @@ from time import perf_counter
 from dotenv import load_dotenv
 
 import author_corpus
+from author_corpus.answer_review import AnswerReviewStore, export_reviewed_training_examples
 from author_corpus.hybrid import load_or_build_bm25_retriever
 from author_corpus.indexing import (
     INDEX_PIPELINE_VERSION,
@@ -29,6 +30,8 @@ from author_corpus.summaries import (
     build_cached_knowledge,
 )
 from author_corpus.timing import TimingLog
+from author_corpus.trace_evaluation import evaluate_generated_claims, load_generated_claim_cases
+from author_corpus.tracing import QueryTraceStore
 
 
 def main() -> None:
@@ -54,6 +57,13 @@ def main() -> None:
             share=arguments.share,
             inbrowser=arguments.inbrowser,
         )
+    elif arguments.command == "export-reviewed":
+        _export_reviewed(
+            output=arguments.output,
+            corpus_fingerprint_value=arguments.corpus_fingerprint,
+        )
+    elif arguments.command == "evaluate-generated-claims":
+        _evaluate_generated_claims(cases_path=arguments.cases)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -99,6 +109,31 @@ def _parser() -> argparse.ArgumentParser:
     chat.add_argument("--server-port", type=int, default=7860, help="Local server port.")
     chat.add_argument("--share", action="store_true", help="Request a temporary public Gradio share link.")
     chat.add_argument("--inbrowser", action="store_true", help="Open the interface in the default browser.")
+    reviewed = subparsers.add_parser(
+        "export-reviewed",
+        help="Export accepted and revised answer reviews with frozen evidence to private JSONL.",
+    )
+    reviewed.add_argument(
+        "--output",
+        type=Path,
+        default=Path("data/private/reviewed-answers.jsonl"),
+        help="Private JSONL destination; defaults under the ignored data/private directory.",
+    )
+    reviewed.add_argument(
+        "--corpus-fingerprint",
+        default=None,
+        help="Optionally restrict export to one corpus fingerprint.",
+    )
+    generated_claims = subparsers.add_parser(
+        "evaluate-generated-claims",
+        help="Evaluate private human labels for claims extracted from generated traces.",
+    )
+    generated_claims.add_argument(
+        "--cases",
+        type=Path,
+        default=None,
+        help="Private YAML cases; defaults to AUTHOR_CORPUS_GENERATED_CLAIM_EVAL.",
+    )
     return parser
 
 
@@ -122,10 +157,58 @@ def _chat(
         corpus_name=runtime.corpus_name,
         review_workspace=runtime.review_workspace,
         trace_store=runtime.trace_store,
+        answer_review_store=runtime.answer_review_store,
+        documents={document.document_id: document for document in runtime.load_result.documents},
         server_name=server_name,
         server_port=server_port,
         share=share,
         inbrowser=inbrowser,
+    )
+
+
+def _export_reviewed(
+    *,
+    output: Path,
+    corpus_fingerprint_value: str | None,
+) -> None:
+    project_root = Path(author_corpus.__file__).resolve().parents[2]
+    output_path = output if output.is_absolute() else project_root / output
+    cache_root = project_root / ".cache"
+    layout = CacheLayout(cache_root, corpus_fingerprint_value or "export")
+    count = export_reviewed_training_examples(
+        AnswerReviewStore(layout.answer_review_path),
+        QueryTraceStore(layout.query_trace_path),
+        output_path,
+        corpus_fingerprint=corpus_fingerprint_value,
+    )
+    print(f"Exported {count} reviewed evidence-bound examples to {output_path}.", flush=True)
+
+
+def _evaluate_generated_claims(*, cases_path: Path | None) -> None:
+    project_root = Path(author_corpus.__file__).resolve().parents[2]
+    load_dotenv(project_root / ".env")
+    resolved_cases = cases_path
+    if resolved_cases is None:
+        resolved_cases = _required_path("AUTHOR_CORPUS_GENERATED_CLAIM_EVAL", relative_to=project_root)
+    elif not resolved_cases.is_absolute():
+        resolved_cases = project_root / resolved_cases
+    config_path = _required_path("AUTHOR_CORPUS_CONFIG", relative_to=project_root)
+    load_result = load_corpus_config(config_path)
+    load_result.raise_for_errors()
+    evaluation = evaluate_generated_claims(
+        load_generated_claim_cases(resolved_cases.resolve()),
+        QueryTraceStore(project_root / ".cache" / "query_traces.sqlite3"),
+        documents={document.document_id: document for document in load_result.documents},
+    )
+    false_support = "n/a" if evaluation.false_support_rate is None else f"{evaluation.false_support_rate:.1%}"
+    print(
+        f"Generated claim cases: {len(evaluation.cases)}; "
+        f"accuracy={evaluation.accuracy:.1%}; "
+        f"exact spans current={evaluation.exact_span_coverage:.1%}; "
+        f"false support={false_support}; "
+        f"abstention={evaluation.abstention_rate:.1%}; "
+        f"elapsed={evaluation.elapsed_seconds:.3f}s.",
+        flush=True,
     )
 
 

@@ -10,6 +10,7 @@ from time import perf_counter
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from author_corpus.answer_review import AnswerReviewStore
 from author_corpus.catalog import CorpusCatalog
 from author_corpus.claim_classification import (
     evaluate_claim_classifier,
@@ -91,6 +92,7 @@ class QueryRuntime:
     fingerprint: str
     review_workspace: ClaimReviewWorkspace | None
     trace_store: QueryTraceStore
+    answer_review_store: AnswerReviewStore
     timings: tuple[QueryTiming, ...]
 
     @property
@@ -163,6 +165,7 @@ def load_query_runtime(
 
     complete = OpenAICompatibleCompleter(settings.model)
     trace_store = QueryTraceStore(layout.query_trace_path)
+    answer_review_store = AnswerReviewStore(layout.answer_review_path)
     service = CorpusQueryService(
         catalog,
         retrieval_profiles,
@@ -194,6 +197,7 @@ def load_query_runtime(
         fingerprint=fingerprint,
         review_workspace=review_workspace,
         trace_store=trace_store,
+        answer_review_store=answer_review_store,
         timings=tuple(timings),
     )
 

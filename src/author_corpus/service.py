@@ -14,8 +14,11 @@ from author_corpus.exact import ExactCatalogResult, execute_catalog_query
 from author_corpus.hybrid import RetrievalProfiles
 from author_corpus.identity import AuthorIdentity, AuthorQueryResolution, resolve_author_query
 from author_corpus.local_llm import LocalModelSettings
+from author_corpus.reasoning import BoundedReasoningEngine
+from author_corpus.reasoning_models import ReasoningTrace
 from author_corpus.retrieval import SemanticCorpusSearch, SemanticSearchResult
 from author_corpus.routing import QueryRoute, QueryRouteDecision, route_query
+from author_corpus.scope import AuthorScope
 from author_corpus.tracing import (
     GenerationTraceSettings,
     QueryTrace,
@@ -55,6 +58,7 @@ class CorpusQueryResult(BaseModel):
     exact: ExactCatalogResult | None = None
     semantic: SemanticSearchResult | None = None
     grounded_answer: GroundedAnswer | None = None
+    reasoning: ReasoningTrace | None = None
     trace_id: str | None = None
     timings: tuple[QueryTiming, ...]
 
@@ -67,6 +71,7 @@ class CorpusQueryResult(BaseModel):
                 or self.author_resolution is not None
                 or self.semantic is not None
                 or self.grounded_answer is not None
+                or self.reasoning is not None
             ):
                 raise ValueError("Exact results require only an exact catalog artifact.")
             if self.retrieval_query != self.query:
@@ -81,6 +86,8 @@ class CorpusQueryResult(BaseModel):
             raise ValueError("A grounded answer must use the exact passages already returned by retrieval.")
         if self.trace_id is not None and self.grounded_answer is None:
             raise ValueError("Only a grounded answer can have a durable query trace.")
+        if self.reasoning is not None and self.grounded_answer is None:
+            raise ValueError("Reasoning metadata requires a grounded answer.")
         return self
 
     def to_markdown(self) -> str:
@@ -100,10 +107,16 @@ class CorpusQueryResult(BaseModel):
         if self.grounded_answer is not None and self.grounded_answer.cited_evidence_numbers:
             covered, total = self.grounded_answer.cited_span_coverage
             span_text = f" · exact evidence spans {covered}/{total}"
+        reasoning_text = ""
+        if self.reasoning is not None:
+            reasoning_text = f" · bounded reasoning {len(self.reasoning.rounds)} round(s)"
         identity_text = ""
         if self.author_resolution is not None and self.author_resolution.changed:
             identity_text = "\n\n_Retrieval resolved configured author references to the corpus-author identity._"
-        return f"{body}{identity_text}\n\n---\nRoute: `{self.decision.route.value}` · {timing_text}{span_text}{trace_text}"
+        return (
+            f"{body}{identity_text}\n\n---\n"
+            f"Route: `{self.decision.route.value}` · {timing_text}{span_text}{reasoning_text}{trace_text}"
+        )
 
 
 class CorpusQueryService:
@@ -131,6 +144,9 @@ class CorpusQueryService:
         self.complete = complete
         self.model_id = model_id
         self.default_author = default_author
+        self.default_scope = (
+            AuthorScope.for_author(default_author) if default_author is not None and default_author.strip() else AuthorScope()
+        )
         self.author_identity = (
             AuthorIdentity.from_catalog(
                 default_author=default_author,
@@ -149,6 +165,7 @@ class CorpusQueryService:
         *,
         retrieval_query: str | None = None,
         generate: bool = True,
+        reason: bool = False,
     ) -> CorpusQueryResult:
         """Execute one question without allowing context to alter exact routing."""
         normalized_query = query.strip()
@@ -178,16 +195,36 @@ class CorpusQueryService:
         effective_query = author_resolution.retrieval_query
         timings.append(QueryTiming(label="author identity", elapsed_seconds=perf_counter() - identity_started))
         search = self._search_for(decision.route)
-        retrieval_started = perf_counter()
-        semantic = search.search(
-            effective_query,
-            minimum_document_author_fraction=self.minimum_document_author_fraction,
-        )
-        timings.append(QueryTiming(label="retrieval", elapsed_seconds=perf_counter() - retrieval_started))
-
         answer: GroundedAnswer | None = None
+        reasoning: ReasoningTrace | None = None
         trace_id: str | None = None
-        if generate and self.complete is not None and self.model_id is not None:
+        answer_elapsed_seconds = 0.0
+        if reason and generate and self.complete is not None and self.model_id is not None:
+            reasoning_started = perf_counter()
+            reasoned = BoundedReasoningEngine(
+                search,
+                self.complete,
+                model_id=self.model_id,
+            ).answer(
+                author_resolution.grounding_question,
+                retrieval_question=effective_query,
+                author_scope=self.default_scope,
+                minimum_document_author_fraction=self.minimum_document_author_fraction,
+            )
+            semantic = reasoned.search_result
+            answer = reasoned.grounded_answer
+            reasoning = reasoned.reasoning
+            answer_elapsed_seconds = perf_counter() - reasoning_started
+            timings.append(QueryTiming(label="bounded reasoning", elapsed_seconds=answer_elapsed_seconds))
+        else:
+            retrieval_started = perf_counter()
+            semantic = search.search(
+                effective_query,
+                minimum_document_author_fraction=self.minimum_document_author_fraction,
+            )
+            timings.append(QueryTiming(label="retrieval", elapsed_seconds=perf_counter() - retrieval_started))
+
+        if generate and answer is None and self.complete is not None and self.model_id is not None:
             generation_started = perf_counter()
             answer = GroundedAnswerer(
                 search,
@@ -196,30 +233,33 @@ class CorpusQueryService:
                 evidence_limit=search.default_limit,
             ).answer_from_search_result(semantic, question=author_resolution.grounding_question)
             generation_timing = QueryTiming(label="generation", elapsed_seconds=perf_counter() - generation_started)
+            answer_elapsed_seconds = generation_timing.elapsed_seconds
             timings.append(generation_timing)
-            if self.trace_context is not None:
-                trace_started = perf_counter()
-                trace = QueryTrace.from_grounded_answer(
-                    answer,
-                    corpus_fingerprint=self.trace_context.corpus_fingerprint,
-                    document_content_hashes=self.trace_context.document_content_hashes,
-                    retrieval=RetrievalTraceSettings(
-                        evidence_limit=search.default_limit,
-                        max_passages_per_document=search.max_passages_per_document,
-                        minimum_document_author_fraction=self.minimum_document_author_fraction,
-                        strategy=search.strategy,
-                        score_kind=search.score_kind,
-                    ),
-                    generation=GenerationTraceSettings.from_local_settings(
-                        self.trace_context.generation_settings,
-                        prompt_version=answer.prompt_version,
-                    ),
-                    elapsed_seconds=generation_timing.elapsed_seconds,
-                    user_query=normalized_query,
-                )
-                self.trace_context.store.put(trace)
-                trace_id = trace.trace_id
-                timings.append(QueryTiming(label="trace persistence", elapsed_seconds=perf_counter() - trace_started))
+        if answer is not None and self.trace_context is not None:
+            trace_started = perf_counter()
+            trace = QueryTrace.from_grounded_answer(
+                answer,
+                corpus_fingerprint=self.trace_context.corpus_fingerprint,
+                document_content_hashes=self.trace_context.document_content_hashes,
+                retrieval=RetrievalTraceSettings(
+                    evidence_limit=search.default_limit,
+                    max_passages_per_document=search.max_passages_per_document,
+                    minimum_document_author_fraction=self.minimum_document_author_fraction,
+                    strategy=semantic.strategy,
+                    score_kind=semantic.score_kind,
+                ),
+                generation=GenerationTraceSettings.from_local_settings(
+                    self.trace_context.generation_settings,
+                    prompt_version=answer.prompt_version,
+                ),
+                elapsed_seconds=answer_elapsed_seconds,
+                user_query=normalized_query,
+                author_scope=self.default_scope,
+                reasoning=reasoning,
+            )
+            self.trace_context.store.put(trace)
+            trace_id = trace.trace_id
+            timings.append(QueryTiming(label="trace persistence", elapsed_seconds=perf_counter() - trace_started))
 
         return CorpusQueryResult(
             query=normalized_query,
@@ -228,6 +268,7 @@ class CorpusQueryService:
             author_resolution=author_resolution,
             semantic=semantic,
             grounded_answer=answer,
+            reasoning=reasoning,
             trace_id=trace_id,
             timings=tuple(timings),
         )

@@ -41,6 +41,7 @@ def test_builds_gradio_chat_without_starting_a_server() -> None:
     assert interface.save_history is False
     assert interface.chatbot.height == "72vh"
     assert interface.chatbot.min_height == 480
+    assert len(interface.additional_inputs) == 1
 
 
 def test_gradio_history_keeps_user_text_and_discards_assistant_output() -> None:
@@ -72,6 +73,7 @@ def test_builds_combined_chat_and_review_interface(tmp_path: Path) -> None:
     assert isinstance(interface, gr.Blocks)
     assert interface.title == "Synthetic Corpus explorer"
     assert "Generated claims — read only" in str(interface.get_config_file())
+    assert "Answer review" in str(interface.get_config_file())
 
 
 def test_review_form_shows_exact_evidence_and_stable_proposal_value(tmp_path: Path) -> None:

@@ -112,6 +112,7 @@ def ask_conversational(
     history: tuple[ConversationMessage, ...] = (),
     *,
     generate: bool = True,
+    reason: bool = False,
 ) -> ConversationTurn:
     """Resolve bounded context and execute through the normal safe query service."""
     resolution = resolve_conversation_query(query, history)
@@ -119,5 +120,6 @@ def ask_conversational(
         resolution.query,
         retrieval_query=resolution.retrieval_query,
         generate=generate,
+        reason=reason,
     )
     return ConversationTurn(resolution=resolution, result=result)

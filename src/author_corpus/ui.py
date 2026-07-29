@@ -7,9 +7,11 @@ from typing import cast
 
 import gradio as gr
 
+from author_corpus.answer_review import AnswerReviewRecord, AnswerReviewStore, review_trace_answer
 from author_corpus.audit import AuditedClaim
 from author_corpus.claim_extraction import AnswerClaimExtraction, extract_answer_claims
 from author_corpus.conversation import ConversationMessage, ConversationRole, ask_conversational
+from author_corpus.models import CorpusDocument
 from author_corpus.review import (
     ClaimReviewAction,
     ClaimReviewProposal,
@@ -51,9 +53,14 @@ def build_chat_interface(
     corpus_name: str = "Author Corpus",
 ) -> gr.ChatInterface:
     """Build a per-browser-session chat interface without shared global history."""
+    reasoning = gr.Checkbox(
+        value=False,
+        label="Use bounded claim-level reasoning",
+        info="Slower: retrieves per subquestion, verifies cited claims, and may make one corrective pass.",
+    )
 
-    def respond(message: str, history: list[dict[str, object]]) -> str:
-        return chat_response(service, message, history)
+    def respond(message: str, history: list[dict[str, object]], use_reasoning: bool) -> str:
+        return chat_response(service, message, history, reason=use_reasoning)
 
     return gr.ChatInterface(
         fn=respond,
@@ -67,11 +74,13 @@ def build_chat_interface(
             "Exact metadata questions use the exhaustive catalog. Content questions use source-grounded retrieval. "
             "Each answer shows its route, sources, and timing."
         ),
+        additional_inputs=[reasoning],
+        additional_inputs_accordion="Reasoning options",
         examples=[
-            "How many articles has the author written here?",
-            "Who are the other authors?",
-            "What themes recur across the corpus?",
-            "What practical advice does the author give readers?",
+            ["How many articles has the author written here?", False],
+            ["Who are the other authors?", False],
+            ["What themes recur across the corpus?", False],
+            ["How did the author's advice change over time?", True],
         ],
         flagging_mode="never",
         analytics_enabled=False,
@@ -84,9 +93,11 @@ def chat_response(
     service: CorpusQueryService,
     message: str,
     history: list[dict[str, object]],
+    *,
+    reason: bool = False,
 ) -> str:
     """Convert Gradio history and execute one bounded conversational turn."""
-    turn = ask_conversational(service, message, _user_history(history))
+    turn = ask_conversational(service, message, _user_history(history), reason=reason)
     return turn.to_markdown()
 
 
@@ -96,6 +107,8 @@ def build_corpus_interface(
     corpus_name: str = "Author Corpus",
     review_workspace: ClaimReviewWorkspace | None = None,
     trace_store: QueryTraceStore | None = None,
+    answer_review_store: AnswerReviewStore | None = None,
+    documents: Mapping[str, CorpusDocument] | None = None,
 ) -> gr.Blocks:
     """Build local chat and explicit claim-review tabs."""
     with gr.Blocks(
@@ -107,6 +120,8 @@ def build_corpus_interface(
             build_chat_interface(service, corpus_name=corpus_name)
         with gr.Tab("Claim review"):
             _render_claim_review_tab(review_workspace, trace_store)
+        with gr.Tab("Answer review"):
+            _render_answer_review_tab(answer_review_store, trace_store, documents)
     return cast(gr.Blocks, interface)
 
 
@@ -116,6 +131,8 @@ def launch_chat_interface(
     corpus_name: str,
     review_workspace: ClaimReviewWorkspace | None = None,
     trace_store: QueryTraceStore | None = None,
+    answer_review_store: AnswerReviewStore | None = None,
+    documents: Mapping[str, CorpusDocument] | None = None,
     server_name: str = "127.0.0.1",
     server_port: int = 7860,
     share: bool = False,
@@ -127,6 +144,8 @@ def launch_chat_interface(
         corpus_name=corpus_name,
         review_workspace=review_workspace,
         trace_store=trace_store,
+        answer_review_store=answer_review_store,
+        documents=documents,
     )
     interface.launch(
         server_name=server_name,
@@ -318,6 +337,95 @@ def answer_claim_extraction_markdown(extraction: AnswerClaimExtraction) -> str:
     return "\n".join(lines)
 
 
+def answer_review_form(
+    trace_store: QueryTraceStore,
+    review_store: AnswerReviewStore,
+    trace_id: str | None,
+) -> tuple[str, str]:
+    """Render one generated answer and its durable review state."""
+    if not trace_id:
+        return "Select a generated answer to review.", ""
+    trace = trace_store.get(trace_id)
+    if trace is None:
+        raise ValueError(f"Unknown query trace: {trace_id!r}.")
+    covered, total = trace.cited_span_coverage
+    prior = review_store.for_trace(trace.trace_id)
+    state = "Pending explicit review" if not prior else _answer_review_summary(prior[0])
+    sources = "\n".join(
+        f"- [{item.evidence_number}] {_escape_inline(item.title)}"
+        + (f" — {_escape_inline(item.canonical_source_uri)}" if item.canonical_source_uri else "")
+        for item in trace.evidence
+    )
+    preview = "\n".join(
+        (
+            f"### {_escape_inline(trace.user_query or trace.query)}",
+            "",
+            f"**Review state:** {state}",
+            f"**Exact cited-span coverage:** {covered}/{total}",
+            f"**Author scope:** `{_escape_inline(trace.author_scope.cache_key)}`",
+            "",
+            trace.answer,
+            "",
+            "### Frozen evidence",
+            "",
+            sources or "No evidence was recorded.",
+        )
+    )
+    return preview, trace.answer
+
+
+def submit_answer_review(
+    trace_store: QueryTraceStore,
+    review_store: AnswerReviewStore,
+    documents: Mapping[str, CorpusDocument],
+    *,
+    trace_id: str | None,
+    reviewer: str,
+    action: str,
+    revised_answer: str,
+    notes: str,
+) -> AnswerReviewRecord:
+    """Validate and persist one explicit whole-answer decision."""
+    if not trace_id:
+        raise ValueError("Select a generated answer to review.")
+    trace = trace_store.get(trace_id)
+    if trace is None:
+        raise ValueError(f"Unknown query trace: {trace_id!r}.")
+    resolved_action = _REVIEW_ACTIONS.get(action)
+    if resolved_action is None:
+        raise ValueError("Choose accept, revise, or reject.")
+    if review_store.for_trace(trace_id):
+        raise ValueError("This generated answer already has a durable review.")
+    review = review_trace_answer(
+        trace,
+        documents=documents,
+        action=resolved_action,
+        reviewer=reviewer,
+        revised_answer=revised_answer if resolved_action == "revise" else None,
+        notes=notes,
+    )
+    review_store.put(review)
+    return review
+
+
+def recent_answer_reviews_markdown(
+    store: AnswerReviewStore,
+    *,
+    limit: int = 10,
+) -> str:
+    """Render recent whole-answer review decisions."""
+    reviews = store.recent(limit=limit)
+    if not reviews:
+        return "No whole-answer reviews have been recorded."
+    lines = ["### Recent answer reviews", ""]
+    for review in reviews:
+        lines.append(
+            f"- `{review.action}` · trace `{review.trace_id}` · "
+            f"reviewer `{_escape_inline(review.reviewer)}` · {review.reviewed_at.isoformat()}"
+        )
+    return "\n".join(lines)
+
+
 def _render_claim_review_tab(
     workspace: ClaimReviewWorkspace | None,
     trace_store: QueryTraceStore | None,
@@ -473,6 +581,87 @@ def _render_generated_claim_preview(store: QueryTraceStore | None) -> None:
     )
 
 
+def _render_answer_review_tab(
+    review_store: AnswerReviewStore | None,
+    trace_store: QueryTraceStore | None,
+    documents: Mapping[str, CorpusDocument] | None,
+) -> None:
+    if review_store is None or trace_store is None or documents is None:
+        gr.Markdown("Answer review requires the trace store, review store, and current corpus documents.")
+        return
+    choices = trace_claim_choices(trace_store)
+    if not choices:
+        gr.Markdown("No generated-answer traces have been recorded.")
+        return
+    initial_id = choices[0][1]
+    trace = gr.Dropdown(choices=choices, value=initial_id, label="Generated answer", interactive=True)
+    initial_preview, initial_answer = answer_review_form(trace_store, review_store, initial_id)
+    preview = gr.Markdown(initial_preview)
+    gr.Markdown(
+        "Accept preserves the answer, revise requires a cited replacement, and reject creates no training example. "
+        "Accepted and revised answers require current exact spans for every citation."
+    )
+    reviewer = gr.Textbox(label="Reviewer identity", placeholder="Required")
+    action = gr.Radio(choices=_REVIEW_ACTION_CHOICES, value="accept", label="Explicit action")
+    revised_answer = gr.Textbox(value=initial_answer, label="Reviewed answer", lines=10)
+    notes = gr.Textbox(label="Review notes", lines=3)
+    submit = gr.Button("Record durable answer review", variant="primary")
+    outcome = gr.Markdown()
+    recent = gr.Markdown(recent_answer_reviews_markdown(review_store))
+
+    def select(trace_id: str | None) -> tuple[str, str]:
+        try:
+            return answer_review_form(trace_store, review_store, trace_id)
+        except ValueError as exc:
+            return f"**Trace not available:** {_escape_inline(str(exc))}", ""
+
+    trace.change(
+        fn=select,
+        inputs=trace,
+        outputs=(preview, revised_answer),
+        api_visibility="private",
+    )
+
+    def record(
+        trace_id: str | None,
+        reviewer_value: str,
+        action_value: str,
+        revised_value: str,
+        notes_value: str,
+    ) -> tuple[str, str, str]:
+        try:
+            review = submit_answer_review(
+                trace_store,
+                review_store,
+                documents,
+                trace_id=trace_id,
+                reviewer=reviewer_value,
+                action=action_value,
+                revised_answer=revised_value,
+                notes=notes_value,
+            )
+        except ValueError as exc:
+            current_preview, _ = answer_review_form(trace_store, review_store, trace_id)
+            return (
+                f"**Review not recorded:** {_escape_inline(str(exc))}",
+                current_preview,
+                recent_answer_reviews_markdown(review_store),
+            )
+        current_preview, _ = answer_review_form(trace_store, review_store, trace_id)
+        return (
+            f"Recorded immutable `{review.action}` review `{review.review_id}`.",
+            current_preview,
+            recent_answer_reviews_markdown(review_store),
+        )
+
+    submit.click(
+        fn=record,
+        inputs=(trace, reviewer, action, revised_answer, notes),
+        outputs=(outcome, preview, recent),
+        api_visibility="private",
+    )
+
+
 def _user_history(history: list[dict[str, object]]) -> tuple[ConversationMessage, ...]:
     messages: list[ConversationMessage] = []
     for raw_message in history:
@@ -502,6 +691,10 @@ def _content_text(content: object) -> str | None:
 def _review_summary(review: ClaimReviewRecord) -> str:
     status = review.audited_claim.status if review.audited_claim is not None else "no claim created"
     return f"Reviewed `{review.action}` by `{_escape_inline(review.reviewer)}` at {review.reviewed_at.isoformat()} (`{status}`)"
+
+
+def _answer_review_summary(review: AnswerReviewRecord) -> str:
+    return f"Reviewed `{review.action}` by `{_escape_inline(review.reviewer)}` at {review.reviewed_at.isoformat()}"
 
 
 def _lines(value: str) -> tuple[str, ...]:

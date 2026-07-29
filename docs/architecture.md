@@ -119,6 +119,8 @@ flowchart TB
     rrf[Reciprocal-rank fusion]
     evidence[One inspected evidence set]
     generator[Optional grounded generation]
+    reasoning[Optional bounded<br/>claim-level reasoning]
+    verifier[Exact-span claim<br/>verification]
     semantic_result[Cited answer or<br/>inspectable passages]
 
     question --> router
@@ -135,6 +137,7 @@ flowchart TB
     identity -. resolved semantic query .-> bm25
     rrf --> evidence
     evidence --> generator --> semantic_result
+    evidence --> reasoning --> verifier --> semantic_result
     evidence -->|generation disabled| semantic_result
 ```
 
@@ -156,9 +159,12 @@ The three routes have deliberately different coverage contracts:
 | `broad_discovery` | Dense retrieval with document diversity | Non-exhaustive | Themes, style exploration, representative works |
 | `focused_evidence` | Dense + BM25 + reciprocal-rank fusion | Non-exhaustive | Specific claims, explanations, comparisons, passages |
 
-The query service retrieves semantic evidence exactly once. If generation is
-enabled, `GroundedAnswerer` receives that already-inspected result; it does not
-perform a second retrieval that could change the evidence or double latency.
+The fast query service retrieves semantic evidence exactly once. If ordinary
+generation is enabled, `GroundedAnswerer` receives that already-inspected
+result. An explicit `reason=True` selects a separate bounded path that retrieves
+per subquestion and may make one corrective pass for unresolved claims. It
+retains every round instead of presenting the additional retrieval as the
+single-pass path.
 
 ## Level 3: one conversational turn
 
@@ -400,6 +406,72 @@ inspectable lexical classifier label, but large cited passages can make those
 labels noisy; they are display-only and do not determine review eligibility.
 The UI has no action that converts an extracted candidate into a proposal.
 
+## Level 8: bounded claim-level reasoning
+
+```mermaid
+flowchart LR
+    question[Hard semantic question]
+    scope[Explicit AuthorScope]
+    plan[Deterministic subquestions]
+    retrieve[Retrieve each component]
+    pool[Deduplicated exact-span<br/>evidence pool]
+    draft[Cited draft]
+    claims[Atomic citation-bound claims]
+    verify{Conservative verifier}
+    answer[Supported or qualified<br/>claims only]
+    retry[One corrective retrieval pass]
+    abstain[Grounded abstention]
+    trace[(Reasoning-aware query trace)]
+
+    question --> plan
+    scope --> plan
+    plan --> retrieve --> pool --> draft --> claims --> verify
+    verify -->|supported / qualified| answer
+    verify -->|unresolved, round 1| retry --> pool
+    verify -->|unresolved, round 2| abstain
+    plan --> trace
+    retrieve --> trace
+    claims --> trace
+    verify --> trace
+```
+
+This path is opt-in and limited to two rounds. Missing exact spans,
+contradictions, updates, attributed reports, mixed voice, and unresolved
+evidence cannot be promoted automatically. `ClaimVerifier` is replaceable so
+alternatives can be compared on private development and unseen holdout cases.
+Automatic verification remains distinct from human audit.
+
+## Level 9: evidence-bound synthesis and answer review
+
+```mermaid
+flowchart LR
+    ledgers[Resolved EvidenceLedgers]
+    current[Current corpus snapshot]
+    scope[AuthorScope]
+    validation[Exact-span freshness<br/>validation]
+    relations[Preserved support,<br/>qualification, contradiction,<br/>and update relations]
+    synthesis[(Immutable evidence-bound<br/>synthesis)]
+    coverage[Inspected / contributing /<br/>unresolved coverage]
+
+    traces[Generated answer traces]
+    reviewer{Identified reviewer}
+    decisions[(Append-only answer reviews)]
+    export[Private evidence-in<br/>training JSONL]
+
+    ledgers --> validation
+    current --> validation
+    scope --> validation --> relations --> synthesis
+    validation --> coverage --> synthesis
+    traces --> reviewer --> decisions
+    decisions -->|accepted or revised| export
+```
+
+Evidence-bound synthesis does not rewrite claims or consume navigation
+summaries. It combines resolved claims, freezes their relationships, and stops
+when dependent source spans are stale. Whole-answer review is a separate
+explicit action. Rejected answers remain auditable but never enter the private
+training export.
+
 ## Cache and rebuild boundaries
 
 | Artifact | Persistence | Rebuild trigger | Role |
@@ -410,6 +482,8 @@ The UI has no action that converts an extracted candidate into a proposal.
 | Document summaries | SQLite cache | Document hash, model, prompt, or summary settings change | Experimental navigation only |
 | Query traces | SQLite cache | Append-only per generated answer | Citation-to-span provenance, reproducibility, and staleness checks |
 | Claim reviews | SQLite audit log | Append-only per explicit reviewer action | Durable accept, revise, and reject decisions |
+| Answer reviews | SQLite audit log | Append-only per explicit reviewer action | Reviewed responses and private behavioral export eligibility |
+| Evidence-bound synthesis | SQLite audit cache | Corpus fingerprint, author scope, or resolved-ledger content changes | Current claim relationships and exact coverage |
 
 Caching improves latency; it does not upgrade generated summaries into source
 evidence. Exact queries always read normalized metadata, and grounded answers
@@ -443,6 +517,16 @@ always cite retrieved source passages.
     heuristic labels never enter the durable review queue automatically.
 15. Private corpus configuration, evaluation labels, caches, and notebook output
     stay outside version control.
+16. Bounded reasoning makes no more than two retrieval/generation rounds and is
+    opt-in.
+17. Only claims whose current exact evidence is conservatively supported or
+    qualified enter an automatic reasoned answer.
+18. Reasoning, synthesis, traces, and reviewed examples carry an explicit
+    author scope; coauthored prose is never assigned to one coauthor.
+19. Evidence-bound synthesis consumes resolved ledgers, retains disagreements,
+    and never treats navigation summaries as facts.
+20. Whole-answer acceptance or revision requires current exact citation spans;
+    ordinary chat and rejected reviews never produce training examples.
 
 ## Component map
 
@@ -465,4 +549,9 @@ always cite retrieved source passages.
 | Offline claim/evidence classification | `src/author_corpus/claim_classification.py` |
 | Read-only generated claim extraction | `src/author_corpus/claim_extraction.py` |
 | Explicit human claim review | `src/author_corpus/review.py` |
+| Explicit author scopes | `src/author_corpus/scope.py` |
+| Bounded claim-level reasoning | `src/author_corpus/reasoning.py` |
+| Generated-claim holdout evaluation | `src/author_corpus/trace_evaluation.py` |
+| Evidence-bound synthesis | `src/author_corpus/synthesis.py` |
+| Whole-answer review and private export | `src/author_corpus/answer_review.py` |
 | Notebook and maintenance entry points | `notebooks/`, `src/author_corpus/cli.py` |

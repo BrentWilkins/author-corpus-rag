@@ -8,6 +8,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from author_corpus.answering import GroundedAnswer
 from author_corpus.audit import EvidenceSpan
 from author_corpus.claim_classification import ClaimEvidenceDecision, EvidenceVoice, classify_claim_evidence
 from author_corpus.tracing import QueryTrace, TracedEvidence
@@ -102,10 +103,51 @@ def extract_answer_claims(trace: QueryTrace) -> AnswerClaimExtraction:
     """Extract cited answer sentences without creating proposals or audit records."""
     evidence_by_number = {item.evidence_number: item for item in trace.evidence}
     spans_by_id = {span.span_id: span for span in trace.evidence_spans}
+    return _extract_claims(
+        trace.answer,
+        trace_id=trace.trace_id,
+        query=trace.user_query or trace.query,
+        evidence_by_number=evidence_by_number,
+        spans_by_id=spans_by_id,
+    )
+
+
+def extract_grounded_answer_claims(
+    answer: GroundedAnswer,
+    *,
+    extraction_id: str = "unpersisted",
+) -> AnswerClaimExtraction:
+    """Extract claims directly from a grounded draft before trace persistence."""
+    evidence = tuple(
+        TracedEvidence.from_passage(
+            passage,
+            evidence_number=number,
+            document_content_hash=(passage.evidence_span.document_content_hash if passage.evidence_span is not None else None),
+        )
+        for number, passage in enumerate(answer.evidence, start=1)
+    )
+    spans = tuple(passage.evidence_span for passage in answer.evidence if passage.evidence_span is not None)
+    return _extract_claims(
+        answer.answer,
+        trace_id=extraction_id,
+        query=answer.query,
+        evidence_by_number={item.evidence_number: item for item in evidence},
+        spans_by_id={span.span_id: span for span in spans},
+    )
+
+
+def _extract_claims(
+    answer: str,
+    *,
+    trace_id: str,
+    query: str,
+    evidence_by_number: dict[int, TracedEvidence],
+    spans_by_id: dict[str, EvidenceSpan],
+) -> AnswerClaimExtraction:
     candidates: list[AnswerClaimCandidate] = []
     uncited: list[str] = []
     ordinal = 0
-    for segment in _answer_segments(trace.answer):
+    for segment in _answer_segments(answer):
         citations = _citation_numbers(segment)
         statement = _clean_statement(segment)
         if not statement:
@@ -125,8 +167,8 @@ def extract_answer_claims(trace: QueryTrace) -> AnswerClaimExtraction:
         )
         candidates.append(
             AnswerClaimCandidate(
-                candidate_id=_candidate_id(trace.trace_id, ordinal, statement, assessments),
-                trace_id=trace.trace_id,
+                candidate_id=_candidate_id(trace_id, ordinal, statement, assessments),
+                trace_id=trace_id,
                 ordinal=ordinal,
                 statement=statement,
                 citation_numbers=citations,
@@ -134,8 +176,8 @@ def extract_answer_claims(trace: QueryTrace) -> AnswerClaimExtraction:
             )
         )
     return AnswerClaimExtraction(
-        trace_id=trace.trace_id,
-        query=trace.user_query or trace.query,
+        trace_id=trace_id,
+        query=query,
         candidates=tuple(candidates),
         uncited_segments=tuple(uncited),
     )

@@ -16,7 +16,9 @@ from author_corpus.answering import GroundedAnswer
 from author_corpus.audit import EvidenceSpan, EvidenceValidationIssue, validate_evidence_spans
 from author_corpus.local_llm import LocalModelSettings, ReasoningEffort
 from author_corpus.models import CorpusDocument
+from author_corpus.reasoning_models import ReasoningTrace
 from author_corpus.retrieval import RetrievalContribution, RetrievedPassage, ScoreKind
+from author_corpus.scope import AuthorScope
 
 
 class RetrievalTraceSettings(BaseModel):
@@ -72,6 +74,7 @@ class TracedEvidence(BaseModel):
     document_id: str
     document_content_hash: str | None = None
     title: str
+    authors: tuple[str, ...] = ()
     source_uris: tuple[str, ...] = ()
     canonical_source_uri: str | None = None
     section_path: tuple[str, ...] = ()
@@ -105,6 +108,7 @@ class TracedEvidence(BaseModel):
                 or (passage.evidence_span.document_content_hash if passage.evidence_span is not None else None)
             ),
             title=passage.title,
+            authors=passage.authors,
             source_uris=passage.source_uris,
             canonical_source_uri=passage.canonical_source_uri,
             section_path=passage.section_path,
@@ -141,7 +145,9 @@ class QueryTrace(BaseModel):
     corpus_fingerprint: str
     query: str
     user_query: str | None = None
+    author_scope: AuthorScope = Field(default_factory=AuthorScope)
     answer: str
+    reasoning: ReasoningTrace | None = None
     cited_evidence_numbers: tuple[int, ...]
     evidence: tuple[TracedEvidence, ...]
     evidence_spans: tuple[EvidenceSpan, ...] = ()
@@ -215,6 +221,8 @@ class QueryTrace(BaseModel):
         generation: GenerationTraceSettings,
         elapsed_seconds: float,
         user_query: str | None = None,
+        author_scope: AuthorScope | None = None,
+        reasoning: ReasoningTrace | None = None,
     ) -> QueryTrace:
         """Create a trace from an answer and the corpus snapshot used for it."""
         if generation.model_id != answer.model_id:
@@ -240,7 +248,9 @@ class QueryTrace(BaseModel):
             corpus_fingerprint=corpus_fingerprint,
             query=answer.query,
             user_query=user_query,
+            author_scope=author_scope or AuthorScope(),
             answer=answer.answer,
+            reasoning=reasoning,
             cited_evidence_numbers=answer.cited_evidence_numbers,
             evidence=evidence,
             evidence_spans=tuple(spans_by_id.values()),

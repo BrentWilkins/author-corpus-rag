@@ -18,26 +18,22 @@ ingestion, routed-query, conversation-sequence, and provenance diagrams.
 
 ## Project status
 
-The current milestones provide normalized Markdown, text, and PDF ingestion,
-validation, an exact SQLite catalog, persistent dense and BM25 retrieval,
-inspectable reciprocal-rank fusion, citation-constrained grounded answers,
-repeatable document- and passage-level retrieval evaluation, deterministic
-query routing with a labeled benchmark, structure-aware Markdown chunks,
-conservative quotation provenance, durable query traces, and initial exact-span
-evidence-ledger models. A conservative claim/evidence classifier is measured
-against corrections, disagreements, quotations, changing facts, qualifications,
-unsupported claims, and explicit abstentions without mutating audited claim
-status. A typed query service now preserves the exact,
-discovery, and focused-evidence boundaries across bounded conversational turns,
-and an optional local Gradio interface uses that same service. Its separate
-claim-review tab exposes source-bound proposals and append-only accept, revise,
-and reject records without automatically changing an answer ledger.
-The same local interface provides a read-only preview that deterministically
-extracts citation-bound sentences from historical generated answers, distinguishes
-exact-span traces from legacy unversioned traces, and takes no review action.
-Per-document summaries are treated as experimental navigation aids.
-Corpus-wide synthesis is paused until its claims can be audited against raw
-source spans.
+The current milestones provide normalized ingestion, exact SQLite catalog
+queries, persistent dense/BM25 retrieval, citation-constrained answers,
+structure and voice provenance, repeatable retrieval and claim evaluation, and
+durable exact-span traces. An opt-in bounded reasoning path decomposes hard
+questions, retrieves per component, verifies citation-bound claims, and makes
+at most one corrective pass. Its conservative verifier admits only supported
+or qualified exact-span claims and remains an evaluated heuristic rather than
+proof.
+
+Explicit author scopes now flow through traces, reasoning, synthesis, and
+reviewed training examples while the existing single configured focal author
+remains the runtime default. Full multi-author filtering and comparison are
+still deferred. Claim and whole-answer reviews are append-only, source-freshness
+checked, and separate from generated suggestions. Evidence-bound synthesis
+combines resolved ledgers without smoothing contradictions or promoting cached
+navigation summaries to fact.
 
 ## Setup
 
@@ -105,6 +101,42 @@ audited claim. Repeated actions on the same proposal are refused. A second,
 read-only subtab inspects generated-answer traces: it lists cited candidate
 sentences, uncited prose, exact-span coverage, and per-evidence heuristic labels
 without creating proposals or changing either audit database.
+
+The chat's collapsed **Reasoning options** panel enables bounded claim-level
+reasoning for an individual question. This slower path is off by default. A
+separate answer-review tab can accept, revise, or reject a historical answer.
+Accept and revise require current exact spans for every citation; ordinary chat
+use never counts as approval.
+
+Evaluate private labels tied to generated trace/candidate/evidence IDs:
+
+```bash
+uv run author-corpus evaluate-generated-claims \
+  --cases generated-claims.local.yaml
+```
+
+The ignored YAML identifies a stable trace, extracted candidate, cited evidence
+number, and human relationship label:
+
+```yaml
+cases:
+  - name: example-support-case
+    trace_id: replace-with-local-trace-id
+    candidate_id: replace-with-local-candidate-id
+    evidence_number: 1
+    expected_label: supports
+    category: factual_support
+```
+
+Export accepted and revised answers together with the frozen evidence shown to
+the model:
+
+```bash
+uv run author-corpus export-reviewed
+```
+
+The default export path is the ignored
+`data/private/reviewed-answers.jsonl`.
 
 The command separately times corpus loading, structure/voice-aware chunking,
 embedding-model loading, embedding/index construction, persistence, and the
@@ -181,10 +213,11 @@ created before span-aware indexing still load, but are explicitly reported as
 unversioned; current traces can be validated against the exact normalized
 source range as well as the document hash.
 
-Human accept, revise, and reject records are stored separately in the ignored
-`.cache/claim_reviews.sqlite3` audit database. Both databases retain corpus
-fingerprints inside their records while remaining available across index
-rebuilds.
+Human claim decisions and whole-answer decisions are stored separately in the
+ignored `.cache/claim_reviews.sqlite3` and `.cache/answer_reviews.sqlite3`
+databases. These stores retain corpus fingerprints while remaining available
+across index rebuilds. Reviewed behavioral exports include their evidence
+context and are not a mechanism for moving corpus facts into model weights.
 
 Dense cosine similarity, BM25 relevance, and reciprocal-rank-fusion values are
 different score types. They must not be compared as if they shared a confidence
@@ -269,6 +302,24 @@ uv run --extra local author-corpus build-knowledge \
 That synthesis may smooth over corrections, qualifications, or disagreements,
 so it must not be treated as a verified corpus conclusion.
 
+## Bounded reasoning and evidence-bound synthesis
+
+`CorpusQueryService.ask(..., reason=True)` enables the opt-in two-round
+reasoning path. Exact catalog queries still bypass retrieval and generation.
+The reasoning trace records its explicit `AuthorScope`, retrieval questions,
+round timings, generated claims, per-evidence decisions, and claims omitted
+from the final answer. Missing exact spans, contradictions, updates, attributed
+reports, and unresolved evidence trigger one corrective retrieval pass or an
+abstention.
+
+`build_evidence_bound_synthesis` operates only on resolved `EvidenceLedger`
+records. It validates every dependent source span, retains claim relationships,
+groups claims without rewriting them, and reports documents inspected,
+contributing evidence, and unresolved coverage. Immutable results are cached
+by corpus fingerprint and author scope in
+`.cache/evidence_syntheses.sqlite3`. This does not convert model output into
+audited truth automatically.
+
 ## Evidence audit direction
 
 The evidence ledger freezes exact character ranges, source hashes, attribution,
@@ -308,6 +359,11 @@ review UI surfaces configured provenance-bearing evaluation cases, and
 generated answers have a separate read-only claim preview. Admitting any
 extracted candidate into the durable review queue remains future work.
 Classifier output is still a heuristic rather than proof.
+
+Private trace-derived labels can be measured separately with
+`evaluate-generated-claims`. Keep development examples separate from unseen
+query/source groups; production rules should address demonstrated failure
+classes rather than individual corpus questions.
 
 ## Privacy boundary
 

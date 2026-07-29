@@ -157,6 +157,24 @@ def test_broad_question_selects_discovery_without_generation(tmp_path: Path) -> 
     assert "Generation is disabled" in result.to_markdown()
 
 
+def test_opt_in_reasoning_is_bounded_and_persisted(tmp_path: Path) -> None:
+    """Keep multi-step work explicit and retain it in the durable trace."""
+    retriever = CountingRetriever()
+    service = _service(tmp_path, retriever, with_generation=True)
+
+    result = service.ask("Compare the recommendation versus the alternative.", reason=True)
+
+    assert result.reasoning is not None
+    assert len(result.reasoning.rounds) == 2
+    assert result.trace_id is not None
+    assert "bounded reasoning 2 round(s)" in result.to_markdown()
+    assert service.trace_context is not None
+    trace = service.trace_context.store.get(result.trace_id)
+    assert trace is not None
+    assert trace.reasoning is not None
+    assert trace.author_scope.authors == ("Avery Stone",)
+
+
 def test_semantic_query_resolves_only_configured_author_alias(tmp_path: Path) -> None:
     """Keep the literal question while removing a trusted author alias from retrieval keywords."""
     retriever = CountingRetriever()

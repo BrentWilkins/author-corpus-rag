@@ -1,5 +1,15 @@
 """Build and query a source-agnostic author corpus."""
 
+from author_corpus.answer_review import (
+    AnswerClaimReview,
+    AnswerReviewAction,
+    AnswerReviewRecord,
+    AnswerReviewStore,
+    ReviewedTrainingExample,
+    TrainingEvidence,
+    export_reviewed_training_examples,
+    review_trace_answer,
+)
 from author_corpus.answering import GroundedAnswer, GroundedAnswerer
 from author_corpus.audit import (
     EVIDENCE_SPAN_VERSION,
@@ -32,6 +42,7 @@ from author_corpus.claim_extraction import (
     AnswerClaimExtraction,
     ClaimEvidenceAssessment,
     extract_answer_claims,
+    extract_grounded_answer_claims,
 )
 from author_corpus.conversation import (
     ConversationMessage,
@@ -87,6 +98,21 @@ from author_corpus.models import (
 )
 from author_corpus.persistence import CacheLayout, corpus_fingerprint
 from author_corpus.querying import build_catalog_tools
+from author_corpus.reasoning import (
+    BoundedReasoningEngine,
+    ClaimVerifier,
+    ConservativeClaimVerifier,
+    plan_reasoning,
+    requires_multistep_reasoning,
+)
+from author_corpus.reasoning_models import (
+    ClaimVerification,
+    ReasonedAnswer,
+    ReasoningPlan,
+    ReasoningRound,
+    ReasoningStep,
+    ReasoningTrace,
+)
 from author_corpus.retrieval import (
     RetrievalContribution,
     RetrievedPassage,
@@ -116,6 +142,7 @@ from author_corpus.routing import (
     route_query,
 )
 from author_corpus.runtime import QueryRuntime, RuntimeSettings, load_query_runtime
+from author_corpus.scope import AuthorScope
 from author_corpus.service import CorpusQueryResult, CorpusQueryService, QueryTiming, QueryTraceContext
 from author_corpus.summaries import (
     CachedChunkSummary,
@@ -128,7 +155,23 @@ from author_corpus.summaries import (
     build_cached_document_summaries,
     build_cached_knowledge,
 )
+from author_corpus.synthesis import (
+    EVIDENCE_SYNTHESIS_VERSION,
+    EvidenceBoundSynthesis,
+    EvidenceSynthesisStore,
+    SynthesisClaimGroup,
+    SynthesisCoverage,
+    build_evidence_bound_synthesis,
+)
 from author_corpus.timing import TimingLog, TimingRecord
+from author_corpus.trace_evaluation import (
+    GeneratedClaimCaseResult,
+    GeneratedClaimEvaluation,
+    GeneratedClaimEvaluationCase,
+    GeneratedClaimLabelMetrics,
+    evaluate_generated_claims,
+    load_generated_claim_cases,
+)
 from author_corpus.tracing import (
     GenerationTraceSettings,
     QueryTrace,
@@ -142,11 +185,17 @@ from author_corpus.workflow import NotebookRunOptions
 
 __all__ = [
     "AuditedClaim",
+    "AnswerClaimReview",
     "AnswerClaimCandidate",
     "AnswerClaimExtraction",
+    "AnswerReviewAction",
+    "AnswerReviewRecord",
+    "AnswerReviewStore",
     "AuthorDocumentStats",
     "AuthorIdentity",
     "AuthorQueryResolution",
+    "AuthorScope",
+    "BoundedReasoningEngine",
     "CacheLayout",
     "CatalogAuthorCount",
     "CatalogAuthorshipResult",
@@ -167,6 +216,8 @@ __all__ = [
     "ClaimEvidenceLabel",
     "ClaimEvidenceSignals",
     "ClaimLabelMetrics",
+    "ClaimVerification",
+    "ClaimVerifier",
     "ClaimRelation",
     "ClaimReviewAction",
     "ClaimReviewProposal",
@@ -182,16 +233,24 @@ __all__ = [
     "ConversationResolution",
     "ConversationRole",
     "ConversationTurn",
+    "ConservativeClaimVerifier",
     "DocumentSummaryBuildResult",
     "EVIDENCE_SPAN_VERSION",
+    "EVIDENCE_SYNTHESIS_VERSION",
+    "EvidenceBoundSynthesis",
     "EvidenceLedger",
     "EvidenceSpan",
+    "EvidenceSynthesisStore",
     "EvidenceValidationIssue",
     "EvidenceVoice",
     "ExactCatalogArguments",
     "ExactCatalogResult",
     "ExactCatalogStatus",
     "GenerationTraceSettings",
+    "GeneratedClaimCaseResult",
+    "GeneratedClaimEvaluation",
+    "GeneratedClaimEvaluationCase",
+    "GeneratedClaimLabelMetrics",
     "GroundedAnswer",
     "GroundedAnswerer",
     "INDEX_PIPELINE_VERSION",
@@ -205,6 +264,11 @@ __all__ = [
     "QueryRoute",
     "QueryRouteDecision",
     "QueryRuntime",
+    "ReasonedAnswer",
+    "ReasoningPlan",
+    "ReasoningRound",
+    "ReasoningStep",
+    "ReasoningTrace",
     "RelevantPassage",
     "ResolvedClaimStatus",
     "RetrievedPassage",
@@ -226,41 +290,53 @@ __all__ = [
     "ReciprocalRankFusionRetriever",
     "RetrieverArm",
     "SourceReference",
+    "SynthesisClaimGroup",
+    "SynthesisCoverage",
     "SummaryProgress",
     "SummaryStore",
     "TimingLog",
     "TimingRecord",
+    "TrainingEvidence",
     "TraceFreshness",
     "TracedEvidence",
     "VoiceAnalysis",
     "VoiceSpan",
+    "ReviewedTrainingExample",
     "analyze_voice",
     "apply_claim_review",
     "ask_conversational",
     "build_cached_document_summaries",
     "build_cached_knowledge",
+    "build_evidence_bound_synthesis",
     "build_catalog_tools",
     "build_retrieval_profiles",
     "corpus_fingerprint",
     "classify_claim_evidence",
     "evaluate_claim_classifier",
+    "evaluate_generated_claims",
     "evaluate_retrieval",
     "evaluate_retrieval_strategies",
     "evaluate_query_router",
     "execute_catalog_query",
     "extract_answer_claims",
+    "extract_grounded_answer_claims",
+    "export_reviewed_training_examples",
     "bm25_index_exists",
     "load_corpus",
     "load_corpus_config",
     "load_claim_classification_cases",
+    "load_generated_claim_cases",
     "load_retrieval_cases",
     "load_query_runtime",
     "load_routing_cases",
     "load_or_build_bm25_retriever",
     "parse_author_aliases",
+    "plan_reasoning",
     "route_query",
     "resolve_author_query",
     "resolve_conversation_query",
+    "requires_multistep_reasoning",
+    "review_trace_answer",
     "review_claim_proposal",
     "validate_evidence_spans",
     "validate_claim_classification_sources",

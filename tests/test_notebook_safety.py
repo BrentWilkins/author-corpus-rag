@@ -69,6 +69,27 @@ def test_notebook_measures_claim_classification_without_mutating_audits() -> Non
     assert "AuditedClaim(" not in notebook_text
 
 
+def test_notebook_evaluates_private_generated_claims_read_only() -> None:
+    """Measure trace-derived labels without creating reviews or training data."""
+    notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
+
+    assert "AUTHOR_CORPUS_GENERATED_CLAIM_EVAL" in notebook_text
+    assert "evaluate_generated_claims(" in notebook_text
+    assert 'timings.finish(\\"Generated-claim evaluation\\"' in notebook_text
+    assert "export_reviewed_training_examples(" not in notebook_text
+
+
+def test_notebook_preserves_author_scope_and_only_inspects_synthesis() -> None:
+    """Keep future multi-author scope explicit without building derived truth on Run All."""
+    notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
+
+    assert "default_scope = AuthorScope()" in notebook_text
+    assert "default_scope = AuthorScope.for_author(author_identity.canonical_name)" in notebook_text
+    assert "author_scope=default_scope" in notebook_text
+    assert "EvidenceSynthesisStore(layout.evidence_synthesis_path)" in notebook_text
+    assert "build_evidence_bound_synthesis(" not in notebook_text
+
+
 def test_notebook_prepares_review_proposals_without_accepting_them() -> None:
     """Expose review candidates while leaving every consequential action explicit."""
     notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
