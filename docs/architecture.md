@@ -290,6 +290,40 @@ remains readable but is marked unversioned when it has no exact span. Both the
 notebook and the chat query service persist generated semantic answers through
 the same local trace store.
 
+## Level 5: offline claim-classification evaluation
+
+```mermaid
+flowchart LR
+    public_cases[Committed synthetic<br/>claim/evidence labels]
+    private_cases[Ignored private<br/>real-world labels]
+    validation[Typed case validation]
+    classifier[Conservative heuristic<br/>classifier]
+    signals[Inspectable overlap, negation,<br/>markers, and voice signals]
+    abstention[Explicit uncertain<br/>abstention]
+    metrics[Accuracy, coverage,<br/>selective accuracy,<br/>per-label precision/recall,<br/>false-support rate]
+    review[Human inspection<br/>of every mistake]
+    ledger[AuditedClaim status]
+
+    public_cases --> validation
+    private_cases --> validation
+    validation --> classifier
+    classifier --> signals
+    classifier --> abstention
+    signals --> metrics
+    abstention --> metrics
+    metrics --> review
+    classifier -. never mutates .-> ledger
+```
+
+The classifier labels one claim/evidence pair as `supports`, `qualifies`,
+`contradicts`, `updates`, `attributed_report`, `insufficient`, or `uncertain`.
+It emits deterministic signals and a rationale, not a confidence score. The
+benchmark is an offline regression harness: predictions never promote a claim
+to audited truth or enter generation automatically. Committed cases are
+synthetic; ignored local cases are required before drawing conclusions about a
+private corpus. The committed set deliberately retains a known entity-role
+reversal miss, making the current false-support failure measurable.
+
 ## Cache and rebuild boundaries
 
 | Artifact | Persistence | Rebuild trigger | Role |
@@ -322,9 +356,11 @@ always cite retrieved source passages.
 9. Conversation context uses previous user wording only; prior model output is
    never treated as retrieval evidence.
 10. Semantic author aliases are explicit private configuration, are checked for
-   catalog collisions, and are never inferred with fuzzy matching.
+    catalog collisions, and are never inferred with fuzzy matching.
 11. Score kinds remain explicit and incomparable across retrieval methods.
-12. Private corpus configuration, evaluation labels, caches, and notebook output
+12. Heuristic claim classifications never mutate manually audited claim status;
+    uncertainty and attributed reports remain distinct from support.
+13. Private corpus configuration, evaluation labels, caches, and notebook output
     stay outside version control.
 
 ## Component map
@@ -345,4 +381,5 @@ always cite retrieved source passages.
 | Local conversational UI | `src/author_corpus/ui.py` |
 | Citation-constrained generation | `src/author_corpus/answering.py` |
 | Exact evidence spans and answer audit trail | `src/author_corpus/audit.py`, `tracing.py` |
+| Offline claim/evidence classification | `src/author_corpus/claim_classification.py` |
 | Notebook and maintenance entry points | `notebooks/`, `src/author_corpus/cli.py` |

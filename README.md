@@ -24,7 +24,10 @@ inspectable reciprocal-rank fusion, citation-constrained grounded answers,
 repeatable document- and passage-level retrieval evaluation, deterministic
 query routing with a labeled benchmark, structure-aware Markdown chunks,
 conservative quotation provenance, durable query traces, and initial exact-span
-evidence-ledger models. A typed query service now preserves the exact,
+evidence-ledger models. A conservative claim/evidence classifier is measured
+against corrections, disagreements, quotations, changing facts, qualifications,
+unsupported claims, and explicit abstentions without mutating audited claim
+status. A typed query service now preserves the exact,
 discovery, and focused-evidence boundaries across bounded conversational turns,
 and an optional local Gradio interface uses that same service. Per-document
 summaries are treated as experimental navigation aids. Corpus-wide synthesis is
@@ -49,6 +52,8 @@ Edit the ignored `corpus.local.yaml`, then point the notebook at it:
 ```bash
 export AUTHOR_CORPUS_CONFIG="$PWD/corpus.local.yaml"
 export AUTHOR_CORPUS_RETRIEVAL_EVAL="$PWD/retrieval-eval.local.yaml"
+# Optional override for private claim/evidence regression cases:
+export AUTHOR_CORPUS_CLAIM_EVAL="$PWD/claim-classification.local.yaml"
 ```
 
 Open `notebooks/author_corpus_analyzer.ipynb` and select the
@@ -251,9 +256,22 @@ qualifiers, and claim relationships such as `supports`, `qualifies`,
 `contradicts`, and `updates`. Its source validator detects missing or changed
 documents before historical evidence is reused.
 
-The current milestone supplies the deterministic storage and validation layer;
-automatic LLM claim extraction and entailment classification remain evaluation
-work. A model's classification will be treated as a heuristic, not proof.
+The deterministic claim/evidence classifier remains outside the answer-writing
+path. It reports lexical overlap, negation mismatch, discourse markers, voice
+provenance, a rationale, and one of seven evidence roles. It deliberately
+abstains with `uncertain`, treats quotations as `attributed_report`, and exposes
+false-support rate alongside accuracy. The committed
+`evaluation/claim-classification.yaml` file is a synthetic regression baseline,
+not evidence of general semantic-entailment accuracy. Set
+`AUTHOR_CORPUS_CLAIM_EVAL` to an ignored local file to measure real corrections
+and disagreements without publishing them. The baseline intentionally retains
+an entity-role-reversal case that the lexical heuristic currently misclassifies,
+so its false-support limitation remains visible instead of being tuned out.
+
+Classifier predictions do not update `AuditedClaim.status` automatically.
+Automatic claim extraction, semantic entailment, and human acceptance workflows
+remain future work; any model classification must remain a heuristic rather
+than proof.
 
 ## Privacy boundary
 

@@ -57,6 +57,16 @@ def test_notebook_reports_exact_cited_span_coverage() -> None:
     assert "exact cited evidence spans:" in notebook_text
 
 
+def test_notebook_measures_claim_classification_without_mutating_audits() -> None:
+    """Run the labeled offline benchmark without promoting predictions to claim status."""
+    notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")
+
+    assert "claim-classification.yaml" in notebook_text
+    assert "evaluate_claim_classifier(" in notebook_text
+    assert "claim false-support rate:" in notebook_text
+    assert "AuditedClaim(" not in notebook_text
+
+
 def test_notebook_does_not_send_exact_catalog_questions_to_semantic_search() -> None:
     """Execute exact metadata safely without non-exhaustive retrieval or generation."""
     notebook_text = NOTEBOOK_PATH.read_text(encoding="utf-8")

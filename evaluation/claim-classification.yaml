@@ -1,0 +1,159 @@
+cases:
+  - name: direct-support
+    category: support
+    claim: The bridge closes during extreme heat.
+    evidence: During extreme heat, the bridge closes.
+    expected_label: supports
+
+  - name: negative-support
+    category: support
+    claim: The north gate is not open overnight.
+    evidence: The north gate is not open overnight.
+    expected_label: supports
+
+  - name: reordered-support
+    category: support
+    claim: The program includes weekly strength training.
+    evidence: Weekly strength training is included in the program.
+    expected_label: supports
+
+  - name: conditional-scope
+    category: qualification
+    claim: The bridge closes during summer.
+    evidence: The bridge closes only when summer temperatures exceed the posted threshold.
+    expected_label: qualifies
+
+  - name: modal-scope
+    category: qualification
+    claim: Strength work prevents running injuries.
+    evidence: Strength work may reduce running injury risk.
+    expected_label: qualifies
+
+  - name: exception-scope
+    category: qualification
+    claim: The route is open every day.
+    evidence: The route is open unless heavy snow blocks access.
+    expected_label: qualifies
+
+  - name: negation-conflict
+    category: disagreement
+    claim: The south gate is open overnight.
+    evidence: The south gate is not open overnight.
+    expected_label: contradicts
+
+  - name: explicit-opposition
+    category: disagreement
+    claim: The policy applies on weekends.
+    evidence: However, the policy does not apply on weekends.
+    expected_label: contradicts
+
+  - name: explicit-correction
+    category: correction
+    claim: The entry fee is twenty dollars.
+    evidence: The statement that the entry fee is twenty dollars is incorrect; the fee is thirty dollars.
+    expected_label: contradicts
+
+  - name: incompatible-quantity
+    category: disagreement
+    claim: The entry fee is twenty dollars.
+    evidence: The entry fee is thirty dollars.
+    expected_label: contradicts
+
+  - name: entity-role-reversal
+    category: uncertainty
+    claim: Alex taught Jordan during the workshop.
+    evidence: Jordan taught Alex during the workshop.
+    expected_label: uncertain
+
+  - name: later-inspection
+    category: changing_fact
+    claim: The route closes during extreme heat.
+    evidence: After a later inspection, the route closes during extreme heat.
+    expected_label: updates
+
+  - name: dated-price-change
+    category: changing_fact
+    claim: The current entry fee is twenty dollars.
+    evidence: As of 2026, the entry fee increased from ten dollars to twenty dollars.
+    expected_label: updates
+
+  - name: dated-price-conflict
+    category: changing_fact
+    claim: The current entry fee is forty dollars.
+    evidence: As of 2026, the entry fee increased from ten dollars to twenty dollars.
+    expected_label: contradicts
+
+  - name: revised-policy
+    category: correction
+    claim: The permit allows overnight parking.
+    evidence: The corrected policy no longer allows overnight parking.
+    expected_label: updates
+
+  - name: direct-quotation
+    category: quotation
+    claim: The route feels comfortable in cool weather.
+    evidence: 'A participant said, "The route feels comfortable in cool weather."'
+    evidence_voice: quoted_speech
+    expected_label: attributed_report
+
+  - name: according-to-source
+    category: quotation
+    claim: The new plan is easier to follow.
+    evidence: According to one coach, the new plan is easier to follow.
+    expected_label: attributed_report
+
+  - name: reported-disagreement
+    category: disagreement
+    claim: The proposal is safe.
+    evidence: One reviewer argued that the proposal is unsafe.
+    expected_label: attributed_report
+
+  - name: mixed-voice-overlap
+    category: quotation
+    claim: The route feels comfortable in cool weather.
+    evidence: The route feels comfortable in cool weather.
+    evidence_voice: mixed
+    expected_label: uncertain
+
+  - name: uncertain-voice-overlap
+    category: uncertainty
+    claim: The permit allows overnight parking.
+    evidence: The permit allows overnight parking.
+    evidence_voice: uncertain
+    expected_label: uncertain
+
+  - name: unrelated-evidence
+    category: unsupported
+    claim: The bridge closes during extreme heat.
+    evidence: The registration office opens at eight in the morning.
+    expected_label: insufficient
+
+  - name: topical-but-incomplete
+    category: unsupported
+    claim: The annual entry fee increased to forty dollars.
+    evidence: The fee schedule was published yesterday.
+    expected_label: insufficient
+
+  - name: unrelated-opposition-marker
+    category: unsupported
+    claim: The bridge closes during extreme heat.
+    evidence: However, the cafeteria changed its breakfast menu.
+    expected_label: insufficient
+
+  - name: unresolved-policy-overlap
+    category: uncertainty
+    claim: The policy changed after the safety review.
+    evidence: The policy review reached a conclusion.
+    expected_label: uncertain
+
+  - name: unresolved-training-overlap
+    category: uncertainty
+    claim: The training plan improved race performance.
+    evidence: The training plan was tested by several runners.
+    expected_label: uncertain
+
+  - name: unresolved-injury-overlap
+    category: uncertainty
+    claim: The new shoes prevent ankle injuries.
+    evidence: The shoes were included in an ankle study.
+    expected_label: uncertain
