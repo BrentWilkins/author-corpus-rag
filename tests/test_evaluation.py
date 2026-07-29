@@ -48,9 +48,52 @@ cases:
     assert evaluation.mean_reciprocal_rank == 0.25
     assert evaluation.cases[0].first_relevant_rank == 2
     assert evaluation.cases[1].first_relevant_rank is None
+    assert evaluation.passage_case_count == 0
+    assert evaluation.passage_hit_rate is None
+
+
+def test_passage_evaluation_rejects_right_document_with_wrong_evidence(tmp_path: Path) -> None:
+    """Fail a passage label when only the surrounding document ID is correct."""
+    path = tmp_path / "retrieval-eval.local.yaml"
+    path.write_text(
+        """\
+cases:
+  - name: wrong-passage
+    query: Find the successful evidence.
+    relevant_document_ids:
+      - relevant
+    relevant_passages:
+      - document_id: relevant
+        contains:
+          - Expected authorial advice.
+        minimum_document_author_fraction: 0.8
+""",
+        encoding="utf-8",
+    )
+    search = SemanticCorpusSearch(EvaluationRetriever(), default_limit=2, max_passages_per_document=1)
+
+    evaluation = evaluate_retrieval(search, load_retrieval_cases(path), top_k=2)
+
+    assert evaluation.hit_rate == 1.0
+    assert evaluation.passage_hit_rate == 0.0
+    assert evaluation.cases[0].first_relevant_rank == 2
+    assert evaluation.cases[0].first_relevant_passage_rank is None
+
+
+def test_passage_evaluation_checks_text_section_and_voice() -> None:
+    """Accept evidence only when content, structure, and voice provenance agree."""
+    cases_path = Path(__file__).parent / "fixtures" / "retrieval_passages.yaml"
+    search = SemanticCorpusSearch(EvaluationRetriever(), default_limit=2, max_passages_per_document=1)
+
+    evaluation = evaluate_retrieval(search, load_retrieval_cases(cases_path), top_k=2)
+
+    assert evaluation.passage_hit_rate == 1.0
+    assert evaluation.passage_mean_reciprocal_rank == 1.0
+    assert evaluation.cases[0].first_relevant_rank == 1
 
 
 def _candidate(document_id: str, *, score: float) -> NodeWithScore:
+    document_author_fraction = 0.2 if document_id == "unrelated" else 0.95
     return NodeWithScore(
         node=TextNode(
             text=f"Evidence from {document_id}.",
@@ -58,6 +101,10 @@ def _candidate(document_id: str, *, score: float) -> NodeWithScore:
                 "document_id": document_id,
                 "title": document_id.title(),
                 "document_type": "article",
+                "section_path": '["Guide", "Advice"]',
+                "passage_voice": "mixed",
+                "document_author_fraction": document_author_fraction,
+                "quoted_speech_fraction": 1.0 - document_author_fraction,
             },
         ),
         score=score,

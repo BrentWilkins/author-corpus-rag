@@ -1,0 +1,14 @@
+cases:
+  - name: authorial-passage
+    query: Find the successful evidence.
+    relevant_document_ids:
+      - relevant
+    minimum_document_author_fraction: 0.8
+    relevant_passages:
+      - document_id: relevant
+        contains:
+          - Evidence from relevant.
+        section_path:
+          - Guide
+          - Advice
+        minimum_document_author_fraction: 0.8

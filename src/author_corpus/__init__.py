@@ -10,12 +10,14 @@ from author_corpus.audit import (
 )
 from author_corpus.catalog import AuthorDocumentStats, CorpusCatalog
 from author_corpus.evaluation import (
+    RelevantPassage,
     RetrievalCase,
     RetrievalCaseResult,
     RetrievalEvaluation,
     evaluate_retrieval,
     load_retrieval_cases,
 )
+from author_corpus.indexing import INDEX_PIPELINE_VERSION
 from author_corpus.ingestion import load_corpus, load_corpus_config
 from author_corpus.models import (
     CorpusDocument,
@@ -50,6 +52,7 @@ from author_corpus.tracing import (
     TracedEvidence,
     TraceFreshness,
 )
+from author_corpus.voice import VoiceAnalysis, VoiceSpan, analyze_voice
 from author_corpus.workflow import NotebookRunOptions
 
 __all__ = [
@@ -70,11 +73,13 @@ __all__ = [
     "GenerationTraceSettings",
     "GroundedAnswer",
     "GroundedAnswerer",
+    "INDEX_PIPELINE_VERSION",
     "KnowledgeBuildResult",
     "LoadIssue",
     "NotebookRunOptions",
     "QueryTrace",
     "QueryTraceStore",
+    "RelevantPassage",
     "RetrievedPassage",
     "RetrievalCase",
     "RetrievalCaseResult",
@@ -89,6 +94,9 @@ __all__ = [
     "TimingRecord",
     "TraceFreshness",
     "TracedEvidence",
+    "VoiceAnalysis",
+    "VoiceSpan",
+    "analyze_voice",
     "build_cached_document_summaries",
     "build_cached_knowledge",
     "build_catalog_tools",

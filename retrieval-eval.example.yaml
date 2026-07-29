@@ -3,3 +3,12 @@ cases:
     query: What does the corpus say about the synthetic topic?
     relevant_document_ids:
       - replace-with-a-logical-document-id
+    minimum_document_author_fraction: 0.8
+    relevant_passages:
+      - document_id: replace-with-a-logical-document-id
+        contains:
+          - replace with a short exact evidence fragment
+        section_path:
+          - Optional parent heading
+          - Optional nearest heading
+        minimum_document_author_fraction: 0.8

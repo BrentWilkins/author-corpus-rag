@@ -32,6 +32,11 @@ def test_query_trace_round_trip_and_freshness(tmp_path: Path) -> None:
                 document_type=document.document_type,
                 source_uris=tuple(source.uri for source in document.sources),
                 canonical_source_uri=document.canonical_source.uri if document.canonical_source else None,
+                section_path=("Guide", "Closures"),
+                passage_voice="document_author",
+                document_author_fraction=1.0,
+                quoted_speech_fraction=0.0,
+                uncertain_voice_fraction=0.0,
                 text="The route closes during extreme heat.",
             ),
         ),
@@ -48,7 +53,11 @@ def test_query_trace_round_trip_and_freshness(tmp_path: Path) -> None:
         answer,
         corpus_fingerprint=corpus_fingerprint([document]),
         document_content_hashes={document.document_id: document.content_hash},
-        retrieval=RetrievalTraceSettings(evidence_limit=5, max_passages_per_document=1),
+        retrieval=RetrievalTraceSettings(
+            evidence_limit=5,
+            max_passages_per_document=1,
+            minimum_document_author_fraction=0.8,
+        ),
         generation=GenerationTraceSettings.from_local_settings(
             local_settings,
             prompt_version=answer.prompt_version,
@@ -63,6 +72,10 @@ def test_query_trace_round_trip_and_freshness(tmp_path: Path) -> None:
     assert restored == trace
     assert store.recent() == (trace,)
     assert trace.evidence[0].passage_text == "The route closes during extreme heat."
+    assert trace.evidence[0].section_path == ("Guide", "Closures")
+    assert trace.evidence[0].passage_voice == "document_author"
+    assert trace.evidence[0].uncertain_voice_fraction == 0.0
+    assert trace.retrieval.minimum_document_author_fraction == 0.8
     assert len(trace.evidence[0].passage_hash) == 64
     assert trace.check_freshness({document.document_id: document}).is_current is True
 

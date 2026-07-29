@@ -71,9 +71,18 @@ class GroundedAnswerer:
         self.max_passage_characters = max_passage_characters
         self.prompt_version = prompt_version
 
-    def answer(self, query: str) -> GroundedAnswer:
+    def answer(
+        self,
+        query: str,
+        *,
+        minimum_document_author_fraction: float | None = None,
+    ) -> GroundedAnswer:
         """Answer one semantic question from retrieved evidence only."""
-        search_result = self.search.search(query, limit=self.evidence_limit)
+        search_result = self.search.search(
+            query,
+            limit=self.evidence_limit,
+            minimum_document_author_fraction=minimum_document_author_fraction,
+        )
         evidence = search_result.passages
         if not evidence:
             return GroundedAnswer(
@@ -130,6 +139,8 @@ Rules:
 - Use only citation numbers that appear below.
 - If the evidence does not support an answer, say that it is insufficient.
 - Do not infer corpus-wide counts or exhaustive lists from semantic search.
+- Do not assume quoted speech belongs to a document author. Use the supplied voice provenance.
+- "document_author" refers to the document's complete listed author set, not one individual coauthor.
 - Be concise and distinguish uncertainty from established information.
 
 Question:
@@ -150,11 +161,22 @@ def _render_evidence(
 ) -> str:
     source = passage.canonical_source_uri or "<no canonical source>"
     text = passage.text[:max_passage_characters]
+    section = " > ".join(passage.section_path) or "<document introduction>"
+    author_fraction = "unknown" if passage.document_author_fraction is None else f"{passage.document_author_fraction:.1%}"
+    quoted_fraction = "unknown" if passage.quoted_speech_fraction is None else f"{passage.quoted_speech_fraction:.1%}"
+    uncertain_fraction = "unknown" if passage.uncertain_voice_fraction is None else f"{passage.uncertain_voice_fraction:.1%}"
+    speakers = ", ".join(passage.attributed_speakers) or "<unknown or none>"
     return f"""\
 [{number}]
 Document ID: {passage.document_id}
 Title: {passage.title}
 Source: {source}
+Section: {section}
+Voice: {passage.passage_voice}
+Document-author proportion: {author_fraction}
+Quoted-speech proportion: {quoted_fraction}
+Uncertain-voice proportion: {uncertain_fraction}
+Explicitly attributed speakers: {speakers}
 Passage:
 <evidence>
 {text}

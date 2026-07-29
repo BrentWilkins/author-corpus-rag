@@ -18,18 +18,21 @@ class SyntheticRetriever(BaseRetriever):
                 title="First Work",
                 text="The most relevant synthetic passage.",
                 score=0.91,
+                document_author_fraction=0.2,
             ),
             _candidate(
                 document_id="work-one",
                 title="First Work",
                 text="Another chunk from the same work.",
                 score=0.89,
+                document_author_fraction=0.95,
             ),
             _candidate(
                 document_id="work-two",
                 title="Second Work",
                 text="A passage from another synthetic work.",
                 score=0.82,
+                document_author_fraction=1.0,
             ),
         ]
 
@@ -67,12 +70,26 @@ def test_search_can_return_multiple_passages_per_document() -> None:
     ]
 
 
+def test_search_can_require_predominantly_document_author_voice() -> None:
+    """Filter quoted candidates before enforcing per-document diversity."""
+    search = SemanticCorpusSearch(SyntheticRetriever(), default_limit=2)
+
+    result = search.search("authorial advice", minimum_document_author_fraction=0.8)
+
+    assert [passage.text for passage in result.passages] == [
+        "Another chunk from the same work.",
+        "A passage from another synthetic work.",
+    ]
+    assert result.discarded_by_voice_filter == 1
+
+
 def _candidate(
     *,
     document_id: str,
     title: str,
     text: str,
     score: float,
+    document_author_fraction: float,
 ) -> NodeWithScore:
     return NodeWithScore(
         node=TextNode(
@@ -85,6 +102,9 @@ def _candidate(
                 "document_type": "article",
                 "source_uris": f'["https://example.test/{title.split()[0].lower()}"]',
                 "canonical_source_uri": f"https://example.test/{title.split()[0].lower()}",
+                "passage_voice": "mixed" if document_author_fraction < 1.0 else "document_author",
+                "document_author_fraction": document_author_fraction,
+                "quoted_speech_fraction": 1.0 - document_author_fraction,
             },
         ),
         score=score,

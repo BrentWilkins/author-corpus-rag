@@ -10,15 +10,23 @@ from time import perf_counter
 from dotenv import load_dotenv
 
 import author_corpus
+from author_corpus.indexing import (
+    INDEX_PIPELINE_VERSION,
+    build_vector_index_from_nodes,
+    persist_vector_index,
+    split_documents,
+    vector_index_exists,
+)
 from author_corpus.ingestion import load_corpus_config
 from author_corpus.local_llm import LocalModelSettings, OpenAICompatibleCompleter
-from author_corpus.persistence import CacheLayout, corpus_fingerprint
+from author_corpus.persistence import CacheLayout, corpus_fingerprint, write_manifest
 from author_corpus.summaries import (
     SummaryProgress,
     SummaryStore,
     build_cached_document_summaries,
     build_cached_knowledge,
 )
+from author_corpus.timing import TimingLog
 
 
 def main() -> None:
@@ -31,11 +39,28 @@ def main() -> None:
             max_tokens=arguments.max_tokens,
             include_experimental_synthesis=arguments.include_experimental_synthesis,
         )
+    elif arguments.command == "build-index":
+        _build_index(
+            embedding_model=arguments.embedding_model,
+            chunk_size=arguments.chunk_size,
+            chunk_overlap=arguments.chunk_overlap,
+        )
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build and inspect local author-corpus artifacts.")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    index = subparsers.add_parser(
+        "build-index",
+        help="Build a versioned structure- and voice-aware vector index.",
+    )
+    index.add_argument(
+        "--embedding-model",
+        default=None,
+        help="Hugging Face embedding model; defaults to EMBEDDING_MODEL or BAAI/bge-small-en-v1.5.",
+    )
+    index.add_argument("--chunk-size", type=int, default=1024, help="Maximum tokens per chunk including embedding metadata.")
+    index.add_argument("--chunk-overlap", type=int, default=200, help="Overlapping tokens retained between oversized chunks.")
     knowledge = subparsers.add_parser(
         "build-knowledge",
         help="Build or resume per-document navigation summaries.",
@@ -58,6 +83,64 @@ def _parser() -> argparse.ArgumentParser:
         help="Also build the unaudited broad corpus synthesis.",
     )
     return parser
+
+
+def _build_index(
+    *,
+    embedding_model: str | None,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> None:
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding  # type: ignore[import-untyped]
+
+    timings = TimingLog()
+    total_started = timings.start()
+    project_root = Path(author_corpus.__file__).resolve().parents[2]
+    load_dotenv(project_root / ".env")
+
+    load_started = timings.start()
+    config_path = _required_path("AUTHOR_CORPUS_CONFIG", relative_to=project_root)
+    load_result = load_corpus_config(config_path)
+    load_result.raise_for_errors()
+    documents = load_result.documents
+    print(timings.finish("Load and validate corpus", load_started), flush=True)
+
+    resolved_embedding_model = embedding_model or os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+    index_options = {
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "index_pipeline_version": INDEX_PIPELINE_VERSION,
+        "embedding_model": resolved_embedding_model,
+    }
+    fingerprint = corpus_fingerprint(documents, options=index_options)
+    layout = CacheLayout(project_root / ".cache", fingerprint)
+    if vector_index_exists(layout):
+        print(f"Vector index already exists: {layout.vector_index_dir}", flush=True)
+        print(timings.finish("Total index command", total_started), flush=True)
+        return
+
+    chunk_started = timings.start()
+    nodes = split_documents(
+        documents,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
+    print(f"{timings.finish('Structure and voice-aware chunking', chunk_started)} ({len(nodes)} chunks)", flush=True)
+
+    model_started = timings.start()
+    embed_model = HuggingFaceEmbedding(model_name=resolved_embedding_model, device="cpu")
+    print(timings.finish("Load embedding model", model_started), flush=True)
+
+    index_started = timings.start()
+    index = build_vector_index_from_nodes(nodes, embed_model=embed_model)
+    print(timings.finish("Embed chunks and build index", index_started), flush=True)
+
+    persist_started = timings.start()
+    persist_vector_index(index, layout)
+    write_manifest(layout, documents, options=index_options)
+    print(timings.finish("Persist vector index", persist_started), flush=True)
+    print(f"Vector index ready: {layout.vector_index_dir}", flush=True)
+    print(timings.finish("Total index command", total_started), flush=True)
 
 
 def _build_knowledge(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Mapping
+from typing import Literal
 
 from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.schema import MetadataMode, NodeWithScore
@@ -25,6 +26,12 @@ class RetrievedPassage(BaseModel):
     document_type: str
     source_uris: tuple[str, ...] = ()
     canonical_source_uri: str | None = None
+    section_path: tuple[str, ...] = ()
+    passage_voice: Literal["document_author", "quoted_speech", "uncertain", "mixed", "unknown"] = "unknown"
+    document_author_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    quoted_speech_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    uncertain_voice_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    attributed_speakers: tuple[str, ...] = ()
     text: str
 
 
@@ -36,6 +43,7 @@ class SemanticSearchResult(BaseModel):
     query: str
     passages: tuple[RetrievedPassage, ...]
     inspected_candidates: int = Field(ge=0)
+    discarded_by_voice_filter: int = Field(default=0, ge=0)
     exhaustive: bool = False
 
     @field_validator("query")
@@ -72,6 +80,7 @@ class SemanticCorpusSearch:
         query: str,
         *,
         limit: int | None = None,
+        minimum_document_author_fraction: float | None = None,
     ) -> SemanticSearchResult:
         """Return the highest-ranked passages without claiming full coverage."""
         normalized_query = query.strip()
@@ -80,22 +89,29 @@ class SemanticCorpusSearch:
         result_limit = self.default_limit if limit is None else limit
         if result_limit < 1:
             raise ValueError("limit must be at least 1.")
+        if minimum_document_author_fraction is not None and not 0.0 <= minimum_document_author_fraction <= 1.0:
+            raise ValueError("minimum_document_author_fraction must be between 0 and 1.")
 
         candidates = self.retriever.retrieve(normalized_query)
         document_counts: Counter[str] = Counter()
         passages: list[RetrievedPassage] = []
+        discarded_by_voice_filter = 0
         for candidate in candidates:
             document_id = _document_id(candidate)
             if document_counts[document_id] >= self.max_passages_per_document:
                 continue
-            document_counts[document_id] += 1
-            passages.append(
-                _to_passage(
-                    candidate,
-                    rank=len(passages) + 1,
-                    document_id=document_id,
-                )
+            passage = _to_passage(
+                candidate,
+                rank=len(passages) + 1,
+                document_id=document_id,
             )
+            if minimum_document_author_fraction is not None and (
+                passage.document_author_fraction is None or passage.document_author_fraction < minimum_document_author_fraction
+            ):
+                discarded_by_voice_filter += 1
+                continue
+            document_counts[document_id] += 1
+            passages.append(passage)
             if len(passages) == result_limit:
                 break
 
@@ -103,6 +119,7 @@ class SemanticCorpusSearch:
             query=normalized_query,
             passages=tuple(passages),
             inspected_candidates=len(candidates),
+            discarded_by_voice_filter=discarded_by_voice_filter,
         )
 
 
@@ -124,6 +141,12 @@ def _to_passage(
         document_type=_optional_text(metadata.get("document_type")) or "document",
         source_uris=_string_sequence(metadata.get("source_uris")),
         canonical_source_uri=canonical_source_uri,
+        section_path=_string_sequence(metadata.get("section_path")),
+        passage_voice=_passage_voice(metadata.get("passage_voice")),
+        document_author_fraction=_optional_float(metadata.get("document_author_fraction")),
+        quoted_speech_fraction=_optional_float(metadata.get("quoted_speech_fraction")),
+        uncertain_voice_fraction=_optional_float(metadata.get("uncertain_voice_fraction")),
+        attributed_speakers=_string_sequence(metadata.get("attributed_speakers")),
         text=candidate.node.get_content(metadata_mode=MetadataMode.NONE).strip(),
     )
 
@@ -150,3 +173,17 @@ def _optional_text(value: object) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _optional_float(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _passage_voice(
+    value: object,
+) -> Literal["document_author", "quoted_speech", "uncertain", "mixed", "unknown"]:
+    if value in {"document_author", "quoted_speech", "uncertain", "mixed"}:
+        return value
+    return "unknown"

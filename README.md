@@ -18,10 +18,11 @@ committed code:
 The current milestones provide normalized Markdown, text, and PDF ingestion,
 validation, an exact SQLite catalog, persistent vector retrieval, inspectable
 source-aware search results, citation-constrained grounded answers, repeatable
-top-k retrieval evaluation, durable query traces, and initial exact-span
-evidence-ledger models. Per-document summaries are treated as experimental
-navigation aids. Corpus-wide synthesis is paused until its claims can be audited
-against raw source spans.
+document- and passage-level retrieval evaluation, structure-aware Markdown
+chunks, conservative quotation provenance, durable query traces, and initial
+exact-span evidence-ledger models. Per-document summaries are treated as
+experimental navigation aids. Corpus-wide synthesis is paused until its claims
+can be audited against raw source spans.
 
 ## Setup
 
@@ -63,6 +64,18 @@ PyTorch comes from its CPU-only wheel index because the default notebook reserve
 GPU memory for generation. Install the `ui` extra when the Gradio milestone is
 added.
 
+Build the current versioned index outside Jupyter:
+
+```bash
+uv run --extra local author-corpus build-index
+```
+
+The command separately times corpus loading, structure/voice-aware chunking,
+embedding-model loading, embedding/index construction, persistence, and the
+complete operation. A changed corpus, embedding model, chunk setting, or
+index-pipeline version produces a new cache fingerprint instead of overwriting a
+previous index.
+
 Run the notebook smoke test headlessly without persisting its private outputs:
 
 ```bash
@@ -88,8 +101,41 @@ marked stale when its source documents change.
 
 Keep corpus-specific retrieval cases in the ignored `retrieval-eval.local.yaml`.
 Each case maps a natural-language query to one or more known relevant logical
-document IDs. Hit rate and mean reciprocal rank provide a small regression test
-before changing embedding models, chunking, or retrieval settings.
+document IDs. A case can additionally identify required passage text, heading
+path, and minimum document-author or quoted-speech proportion. Document hit rate
+and mean reciprocal rank remain useful discovery metrics; passage hit rate
+detects the more important failure where the right article returns the wrong
+evidence.
+
+## Structure and voice provenance
+
+Markdown headings define natural sections before the sentence splitter applies
+the configured token ceiling and overlap. Embeddings receive the document title,
+heading path, and section lead as context. Retrieved evidence remains the
+untouched chunk text rather than a generated proposition or contextual rewrite.
+
+Direct quotation marks and Markdown blockquotes are labeled separately from
+document-author narration. Malformed or unmatched quote delimiters produce an
+`uncertain` span rather than being silently credited to the author. Oversized
+quotations retain their label when they cross chunk boundaries. Explicit nearby
+names such as `Avery Stone says` may be recorded as speakers; pronouns and
+uncertain attributions remain unnamed.
+`document_author` means prose attributable to the document's listed author set.
+It must not be interpreted as one particular person's voice for coauthored
+documents.
+
+This deterministic layer is intentionally conservative. It does not yet resolve
+indirect speech, free indirect discourse, transcription errors, or every
+publication's pull-quote markup. Those limitations belong in passage-level
+evaluation rather than being hidden behind an LLM guess.
+
+The design follows findings that document segmentation and retrieval granularity
+materially affect RAG quality, while preserving raw evidence for attribution:
+
+- [Dense X Retrieval](https://arxiv.org/abs/2312.06648)
+- [Late Chunking](https://arxiv.org/abs/2409.04701)
+- [Document Segmentation Matters for Retrieval-Augmented Generation](https://aclanthology.org/2025.findings-acl.422/)
+- [ARES](https://aclanthology.org/2024.naacl-long.20/)
 
 ## Cached navigation summaries
 

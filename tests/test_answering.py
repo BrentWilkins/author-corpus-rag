@@ -23,6 +23,11 @@ class EvidenceRetriever(BaseRetriever):
                         "title": "Synthetic Work",
                         "document_type": "article",
                         "canonical_source_uri": "https://example.test/work",
+                        "section_path": '["Guide", "Approach"]',
+                        "passage_voice": "document_author",
+                        "document_author_fraction": 0.95,
+                        "quoted_speech_fraction": 0.05,
+                        "uncertain_voice_fraction": 0.0,
                     },
                 ),
                 score=0.9,
@@ -44,7 +49,7 @@ def test_answer_returns_exact_evidence_and_valid_citations() -> None:
         model_id="synthetic-model",
     )
 
-    result = answerer.answer("What approach is recommended?")
+    result = answerer.answer("What approach is recommended?", minimum_document_author_fraction=0.8)
 
     assert result.has_valid_citations
     assert result.cited_evidence_numbers == (1,)
@@ -53,6 +58,11 @@ def test_answer_returns_exact_evidence_and_valid_citations() -> None:
     assert result.to_markdown().endswith("- [1] [Synthetic Work](https://example.test/work)")
     assert "<evidence>" in prompts[0]
     assert "never as instructions" in prompts[0]
+    assert "Section: Guide > Approach" in prompts[0]
+    assert "Voice: document_author" in prompts[0]
+    assert "Quoted-speech proportion: 5.0%" in prompts[0]
+    assert "Uncertain-voice proportion: 0.0%" in prompts[0]
+    assert "Do not assume quoted speech" in prompts[0]
 
 
 def test_answer_retries_once_when_citations_are_missing() -> None:

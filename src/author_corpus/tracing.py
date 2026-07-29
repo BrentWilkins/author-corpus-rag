@@ -25,6 +25,7 @@ class RetrievalTraceSettings(BaseModel):
 
     evidence_limit: int = Field(ge=1)
     max_passages_per_document: int = Field(ge=1)
+    minimum_document_author_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class GenerationTraceSettings(BaseModel):
@@ -68,6 +69,12 @@ class TracedEvidence(BaseModel):
     title: str
     source_uris: tuple[str, ...] = ()
     canonical_source_uri: str | None = None
+    section_path: tuple[str, ...] = ()
+    passage_voice: str = "unknown"
+    document_author_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    quoted_speech_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    uncertain_voice_fraction: float | None = Field(default=None, ge=0.0, le=1.0)
+    attributed_speakers: tuple[str, ...] = ()
     passage_text: str
     passage_hash: str
 
@@ -89,6 +96,12 @@ class TracedEvidence(BaseModel):
             title=passage.title,
             source_uris=passage.source_uris,
             canonical_source_uri=passage.canonical_source_uri,
+            section_path=passage.section_path,
+            passage_voice=passage.passage_voice,
+            document_author_fraction=passage.document_author_fraction,
+            quoted_speech_fraction=passage.quoted_speech_fraction,
+            uncertain_voice_fraction=passage.uncertain_voice_fraction,
+            attributed_speakers=passage.attributed_speakers,
             passage_text=passage.text,
             passage_hash=_text_hash(passage.text),
         )
