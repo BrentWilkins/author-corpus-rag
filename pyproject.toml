@@ -26,7 +26,9 @@ local = [
     "openai>=2.49",
     "torch>=2.9",
 ]
-ui = ["gradio>=6.0"]
+ui = [
+    "gradio>=6.20,<7",
+]
 
 [dependency-groups]
 dev = [

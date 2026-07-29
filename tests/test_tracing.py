@@ -91,6 +91,7 @@ def test_query_trace_round_trip_and_freshness(tmp_path: Path) -> None:
     assert trace.evidence[0].retrieval_contributions[0].method == "dense"
     assert trace.retrieval.minimum_document_author_fraction == 0.8
     assert trace.retrieval.strategy == "hybrid_evidence"
+    assert trace.user_query is None
     assert len(trace.evidence[0].passage_hash) == 64
     assert trace.check_freshness({document.document_id: document}).is_current is True
 

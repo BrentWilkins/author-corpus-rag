@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict
 
-from author_corpus.retrieval import RetrievedPassage, SemanticCorpusSearch
+from author_corpus.retrieval import RetrievedPassage, SemanticCorpusSearch, SemanticSearchResult
 
 ANSWER_PROMPT_VERSION = "grounded-answer-v1"
 INSUFFICIENT_EVIDENCE_ANSWER = "The retrieved evidence is insufficient to answer this question."
@@ -83,6 +83,10 @@ class GroundedAnswerer:
             limit=self.evidence_limit,
             minimum_document_author_fraction=minimum_document_author_fraction,
         )
+        return self.answer_from_search_result(search_result)
+
+    def answer_from_search_result(self, search_result: SemanticSearchResult) -> GroundedAnswer:
+        """Generate from an already inspected result without retrieving again."""
         evidence = search_result.passages
         if not evidence:
             return GroundedAnswer(

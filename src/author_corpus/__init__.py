@@ -9,6 +9,14 @@ from author_corpus.audit import (
     EvidenceValidationIssue,
 )
 from author_corpus.catalog import AuthorDocumentStats, CorpusCatalog
+from author_corpus.conversation import (
+    ConversationMessage,
+    ConversationResolution,
+    ConversationRole,
+    ConversationTurn,
+    ask_conversational,
+    resolve_conversation_query,
+)
 from author_corpus.evaluation import (
     RelevantPassage,
     RetrievalBenchmark,
@@ -67,6 +75,8 @@ from author_corpus.routing import (
     load_routing_cases,
     route_query,
 )
+from author_corpus.runtime import QueryRuntime, RuntimeSettings, load_query_runtime
+from author_corpus.service import CorpusQueryResult, CorpusQueryService, QueryTiming, QueryTraceContext
 from author_corpus.summaries import (
     CachedChunkSummary,
     CachedCorpusSynthesis,
@@ -107,6 +117,12 @@ __all__ = [
     "CorpusCatalog",
     "CorpusDocument",
     "CorpusLoadResult",
+    "CorpusQueryResult",
+    "CorpusQueryService",
+    "ConversationMessage",
+    "ConversationResolution",
+    "ConversationRole",
+    "ConversationTurn",
     "DocumentSummaryBuildResult",
     "EvidenceLedger",
     "EvidenceSpan",
@@ -123,8 +139,11 @@ __all__ = [
     "NotebookRunOptions",
     "QueryTrace",
     "QueryTraceStore",
+    "QueryTiming",
+    "QueryTraceContext",
     "QueryRoute",
     "QueryRouteDecision",
+    "QueryRuntime",
     "RelevantPassage",
     "RetrievedPassage",
     "RetrievalBenchmark",
@@ -139,6 +158,7 @@ __all__ = [
     "RoutingCase",
     "RoutingCaseResult",
     "RoutingEvaluation",
+    "RuntimeSettings",
     "SemanticCorpusSearch",
     "SemanticSearchResult",
     "ReciprocalRankFusionRetriever",
@@ -153,6 +173,7 @@ __all__ = [
     "VoiceAnalysis",
     "VoiceSpan",
     "analyze_voice",
+    "ask_conversational",
     "build_cached_document_summaries",
     "build_cached_knowledge",
     "build_catalog_tools",
@@ -166,7 +187,9 @@ __all__ = [
     "load_corpus",
     "load_corpus_config",
     "load_retrieval_cases",
+    "load_query_runtime",
     "load_routing_cases",
     "load_or_build_bm25_retriever",
     "route_query",
+    "resolve_conversation_query",
 ]

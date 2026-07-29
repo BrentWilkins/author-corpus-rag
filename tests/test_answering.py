@@ -101,3 +101,20 @@ def test_answer_does_not_call_model_without_evidence() -> None:
 
     assert result.answer == INSUFFICIENT_EVIDENCE_ANSWER
     assert result.evidence == ()
+
+
+def test_answer_can_reuse_an_already_inspected_search_result() -> None:
+    """Generate against the supplied evidence without a second retriever call."""
+    retriever = EvidenceRetriever()
+    search = SemanticCorpusSearch(retriever)
+    search_result = search.search("What approach is recommended?")
+    answerer = GroundedAnswerer(
+        search,
+        lambda prompt: "The source recommends a gradual approach [1].",
+        model_id="synthetic-model",
+    )
+
+    result = answerer.answer_from_search_result(search_result)
+
+    assert result.evidence == search_result.passages
+    assert result.cited_evidence_numbers == (1,)

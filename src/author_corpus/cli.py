@@ -47,6 +47,13 @@ def main() -> None:
             chunk_size=arguments.chunk_size,
             chunk_overlap=arguments.chunk_overlap,
         )
+    elif arguments.command == "chat":
+        _chat(
+            server_name=arguments.server_name,
+            server_port=arguments.server_port,
+            share=arguments.share,
+            inbrowser=arguments.inbrowser,
+        )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -84,7 +91,40 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also build the unaudited broad corpus synthesis.",
     )
+    chat = subparsers.add_parser(
+        "chat",
+        help="Launch the local routed and source-grounded Gradio chat interface.",
+    )
+    chat.add_argument("--server-name", default="127.0.0.1", help="Bind address; defaults to local access only.")
+    chat.add_argument("--server-port", type=int, default=7860, help="Local server port.")
+    chat.add_argument("--share", action="store_true", help="Request a temporary public Gradio share link.")
+    chat.add_argument("--inbrowser", action="store_true", help="Open the interface in the default browser.")
     return parser
+
+
+def _chat(
+    *,
+    server_name: str,
+    server_port: int,
+    share: bool,
+    inbrowser: bool,
+) -> None:
+    project_root = Path(author_corpus.__file__).resolve().parents[2]
+    load_dotenv(project_root / ".env")
+    from author_corpus.runtime import load_query_runtime
+    from author_corpus.ui import launch_chat_interface
+
+    runtime = load_query_runtime(project_root=project_root)
+    for timing in runtime.timings:
+        print(f"{timing.label}: {timing.elapsed_seconds:.3f}s", flush=True)
+    launch_chat_interface(
+        runtime.service,
+        corpus_name=runtime.corpus_name,
+        server_name=server_name,
+        server_port=server_port,
+        share=share,
+        inbrowser=inbrowser,
+    )
 
 
 def _build_index(

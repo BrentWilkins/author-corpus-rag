@@ -34,6 +34,7 @@ def test_notebook_uses_separate_discovery_and_grounded_evidence_profiles() -> No
         in notebook_text
     )
     assert "evidence_limit=selected_search.default_limit" in notebook_text
+    assert "grounded_answerer.answer_from_search_result(semantic_result)" in notebook_text
 
 
 def test_notebook_does_not_send_exact_catalog_questions_to_semantic_search() -> None:

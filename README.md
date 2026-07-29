@@ -13,6 +13,9 @@ committed code:
 - source documents and generated indexes remain outside version control;
 - committed notebooks contain no execution output.
 
+See [the architecture guide](docs/architecture.md) for system-context,
+ingestion, routed-query, conversation-sequence, and provenance diagrams.
+
 ## Project status
 
 The current milestones provide normalized Markdown, text, and PDF ingestion,
@@ -21,9 +24,11 @@ inspectable reciprocal-rank fusion, citation-constrained grounded answers,
 repeatable document- and passage-level retrieval evaluation, deterministic
 query routing with a labeled benchmark, structure-aware Markdown chunks,
 conservative quotation provenance, durable query traces, and initial exact-span
-evidence-ledger models. Per-document summaries are treated as experimental
-navigation aids. Corpus-wide synthesis is paused until its claims can be
-audited against raw source spans.
+evidence-ledger models. A typed query service now preserves the exact,
+discovery, and focused-evidence boundaries across bounded conversational turns,
+and an optional local Gradio interface uses that same service. Per-document
+summaries are treated as experimental navigation aids. Corpus-wide synthesis is
+paused until its claims can be audited against raw source spans.
 
 ## Setup
 
@@ -31,7 +36,7 @@ Install Python 3.14 and
 [uv](https://docs.astral.sh/uv/getting-started/installation/), then run:
 
 ```bash
-uv sync --dev --extra local
+uv sync --dev --extra local --extra ui
 uv run python -m ipykernel install --user \
   --name author-corpus-rag \
   --display-name "Python 3.14 (author-corpus-rag)"
@@ -62,14 +67,24 @@ AUTHOR_CORPUS_RUN_GROUNDED_ANSWER=1
 
 The `local` extra installs local LLM and Hugging Face embedding integrations.
 PyTorch comes from its CPU-only wheel index because the default notebook reserves
-GPU memory for generation. Install the `ui` extra when the Gradio milestone is
-added.
+GPU memory for generation. The `ui` extra installs the local Gradio chat.
 
 Build the current versioned index outside Jupyter:
 
 ```bash
 uv run --extra local author-corpus build-index
 ```
+
+After the index exists, launch the conversational interface locally:
+
+```bash
+uv run --extra local --extra ui author-corpus chat --inbrowser
+```
+
+The server binds to `127.0.0.1` by default, disables analytics and saved UI
+history, and does not request a public share link. Chat history is maintained by
+the browser session; the retrieval context layer uses at most the previous user
+question and never feeds a generated assistant answer back as evidence.
 
 The command separately times corpus loading, structure/voice-aware chunking,
 embedding-model loading, embedding/index construction, persistence, and the

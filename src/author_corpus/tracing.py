@@ -133,6 +133,7 @@ class QueryTrace(BaseModel):
     created_at: datetime
     corpus_fingerprint: str
     query: str
+    user_query: str | None = None
     answer: str
     cited_evidence_numbers: tuple[int, ...]
     evidence: tuple[TracedEvidence, ...]
@@ -159,6 +160,7 @@ class QueryTrace(BaseModel):
         retrieval: RetrievalTraceSettings,
         generation: GenerationTraceSettings,
         elapsed_seconds: float,
+        user_query: str | None = None,
     ) -> QueryTrace:
         """Create a trace from an answer and the corpus snapshot used for it."""
         if generation.model_id != answer.model_id:
@@ -178,6 +180,7 @@ class QueryTrace(BaseModel):
             created_at=datetime.now(UTC),
             corpus_fingerprint=corpus_fingerprint,
             query=answer.query,
+            user_query=user_query,
             answer=answer.answer,
             cited_evidence_numbers=answer.cited_evidence_numbers,
             evidence=evidence,
